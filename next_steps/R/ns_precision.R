@@ -91,15 +91,19 @@ precision_ladder <- function(ds, size, seed, rlen, modes = c("euclid", "dtw"), m
 
 # the ladder of the report, computed once and cached (the same key as the report's); 'settings' names the
 # size and the passes of each of the two runs
-compute_ladder <- function(datasets, mpfr_bits = 256, settings = list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4)),
+compute_ladder <- function(datasets, mpfr_bits = 256,
+                           settings = list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4), pd_raw = list(size = 7, rlen = 4)),
                            dir = "next_steps/cache") {
   small_cbf <- make_cbf(30, 40, 0.5, seed = 1)
   small_cbf$title <- "small CBF (90 series of 40 points, as the tutorial)"
+  pd_raw <- datasets$pd                                             # the same pulses as raw pressure in mPa: four decades, no asinh
+  pd_raw$X <- sinh(datasets$pd$X); pd_raw$key <- "pd_raw"; pd_raw$title <- "PD stand-in as raw pressure (mPa, no asinh)"
   key <- bench_key(mpfr_bits, settings, lapply(datasets$pd, function(x) x),
                    files = c(NS_CODE_FILES[c(1, 3, 4)], "next_steps/ns_mpfr.cpp", "next_steps/R/ns_precision.R"))
   ladder <- cached("precision", key, dir = dir, fn = function() list(
     cbf = precision_ladder(small_cbf, settings$cbf$size, 1, rlen = settings$cbf$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits, with_rmpfr = TRUE),
-    pd  = precision_ladder(datasets$pd, settings$pd$size, 1, rlen = settings$pd$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits)))
+    pd  = precision_ladder(datasets$pd, settings$pd$size, 1, rlen = settings$pd$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits),
+    pd_raw = precision_ladder(pd_raw, settings$pd_raw$size, 1, rlen = settings$pd_raw$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits)))
   ladder$small_cbf <- small_cbf
   ladder
 }

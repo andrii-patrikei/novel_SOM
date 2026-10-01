@@ -72,7 +72,7 @@ trust_cont <- function(Dx, bmu, grid_dist, k = 12, max_items = 400) {
     trust <- trust + sum(pmax(rank_data[setdiff(nm, nd)] - k, 0))
     cont  <- cont  + sum(pmax(rank_map[setdiff(nd, nm)] - k, 0))
   }
-  norm <- 2 / (m * k * (2 * m - 3 * k - 1))
+  norm <- if (2 * k < m) 2 / (m * k * (2 * m - 3 * k - 1)) else 2 / (m * (m - k) * (m - k - 1))   # Venna & Kaski's two cases
   c(trust = 1 - norm * trust, cont = 1 - norm * cont)
 }
 
@@ -99,9 +99,8 @@ measures <- function(ds, fit, spec, judges = c("euclid", "dtw", "own"), with_tru
     EV <- if (soft_own) NA else 1 - mean(mp$dist^2) / mean(d_mean^2)
     TE <- mean(grid$dist[cbind(mp$bmu, mp$bmu2)] > 1.01)
     KL <- if (soft_own) NA else { P <- map_ways_cpp(pmax(dV, 0), grid$links); mean(mp$dist + P[cbind(mp$bmu, mp$bmu2)]) }
-    # two prototypes that coincide would give a zero distance and a zero ratio; they get 1e-12 instead (such a
-    # pair also counts as a near-perfect neighbourhood in the data, which flatters TP a little)
-    TP <- if (soft_own) NA else topographic_product_cpp(pmax(dV, 0) + (dV == 0 & row(dV) != col(dV)) * 1e-12, grid$dist)
+    # (two prototypes that coincide give a zero ratio, which the C++ counts as no contribution)
+    TP <- if (soft_own) NA else topographic_product_cpp(pmax(dV, 0), grid$dist)
     g  <- groups_of(dV, mp$bmu, n_cls)
     # trustworthiness and continuity against the Euclidean neighbourhoods of the items (one yardstick for
     # every map; an N x N DTW table per map would cost more than the map)

@@ -27,7 +27,7 @@ Code in `next_steps/`:
 | `R/ns_report.R` | chart and table style, map drawing |
 | `tests/test_core.R` | checks of the compiled core against R implementations |
 | `run_benchmark.R` | computes the cache outside the knit: `Rscript next_steps/run_benchmark.R [seeds] [passes] [cores]` |
-| `ideas/ideas.json` | the brainstorm: ideas from seven angles, each verified by a skeptic, ranked into tiers |
+| `ideas/ideas.json` | the brainstorm: 77 ideas from seven angles, each tried by a skeptic from another angle (42 kept, 35 dropped with the reason), ranked into tiers, with the synthesizer's headline, the physics bridge and the completeness critic's gaps |
 
 Needs R with Rcpp, rmarkdown, plotly, DT, htmltools, jsonlite, digest, xfun,
 Rmpfr, a C++17 compiler, and the GMP and MPFR libraries with headers

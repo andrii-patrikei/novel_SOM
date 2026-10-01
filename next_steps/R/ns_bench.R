@@ -74,6 +74,24 @@ compute_all <- function(datasets, variants, sizes, seeds, rlen, cores, det_size 
 # ------------------------------------------------------------------------------------- detection as novelty
 # train on the background class only, score every item by its distance to the winner, and ask how well
 # that score tells the other classes from the background (AUROC); one row per map
+# the controls that are not maps: a loudness threshold (the peak of the asinh pressure) and the distance to
+# the nearest noise item under three distances (a noise item against the other noise items)
+detection_baselines <- function(ds, background) {
+  keep <- ds$cls == background; pos <- !keep
+  scores <- list(base_peak = apply(abs(ds$X), 1, max))
+  for (judge in c("euclid", "cosine", "dtw")) {
+    Dm <- cross_dist(ds$X, ds$X[keep, , drop = FALSE], ds, judge_args(ds, judge))
+    idx <- which(keep); for (r in seq_along(idx)) Dm[idx[r], r] <- Inf
+    scores[[paste0("base_1nn_", judge)]] <- apply(Dm, 1, min)
+  }
+  do.call(rbind, lapply(names(scores), function(v) {
+    sc <- scores[[v]]
+    per_class <- sapply(setdiff(levels(ds$cls), background), function(cl) auroc(sc[keep | ds$cls == cl], (ds$cls == cl)[keep | ds$cls == cl]))
+    cbind(data.frame(dataset = ds$key, variant = v, size = NA, seed = NA, AUROC = auroc(sc, pos), stringsAsFactors = FALSE),
+          as.list(setNames(per_class, paste0("AUROC_", names(per_class)))))
+  }))
+}
+
 run_detection <- function(datasets, variants, sizes, seeds, rlen, cores, background = c(pd = "noise")) {
   jobs <- expand.grid(dataset = names(background), variant = names(variants), size = sizes, seed = seeds, stringsAsFactors = FALSE)
   rows <- parallel::mclapply(seq_len(nrow(jobs)), function(i) {
@@ -89,5 +107,6 @@ run_detection <- function(datasets, variants, sizes, seeds, rlen, cores, backgro
     cbind(data.frame(dataset = job$dataset, variant = job$variant, size = job$size, seed = job$seed,
                      AUROC = auroc(score, pos), stringsAsFactors = FALSE), as.list(setNames(per_class, paste0("AUROC_", names(per_class)))))
   }, mc.cores = cores, mc.preschedule = FALSE)
-  do.call(rbind, rows)
+  base <- do.call(rbind, lapply(names(background), function(k) detection_baselines(datasets[[k]], background[[k]])))
+  rbind(do.call(rbind, rows), base)
 }

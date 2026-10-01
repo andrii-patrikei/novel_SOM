@@ -91,7 +91,7 @@ n_maps <- nrow(unique(bench[, c("dataset", "variant", "size", "seed")]))
 cpu_min <- sum(unique(bench[, c("dataset", "variant", "size", "seed", "seconds")])$seconds) / 60
 
 # the precision ladder: the tutorial's small CBF (with the Rmpfr check of the MPFR core) and the PD stand-in
-LADDER <- if (QUICK) list(cbf = list(size = 5, rlen = 4), pd = list(size = 5, rlen = 1)) else list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4))
+LADDER <- if (QUICK) list(cbf = list(size = 5, rlen = 4), pd = list(size = 5, rlen = 1), pd_raw = list(size = 5, rlen = 1)) else list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4), pd_raw = list(size = 7, rlen = 4))
 ladder <- compute_ladder(datasets, p$mpfr_bits, LADDER, dir = CACHE_DIR)
 small_cbf <- ladder$small_cbf
 
@@ -181,10 +181,14 @@ dist_vs_eu <- function(k) { v <- setdiff(names(VARIANTS)[sapply(VARIANTS, `[[`, 
   w <- sapply(v, function(x) wins_vs(k, x, "euclid", REF, "ari_own")); v[w["better", ] >= 4 & w["better", ] > w["worse", ]] }
 clear_pd <- dist_vs_eu("pd"); clear_ge <- dist_vs_eu("gestures"); clear_cbf <- dist_vs_eu("cbf")
 size_flip  <- sapply(names(datasets), function(k) sapply(SIZES, function(s) best_variant(k, s, "ari_own")$id))
-lad_tab <- rbind(cbind(data = "cbf", ladder$cbf$table), cbind(data = "pd", ladder$pd$table))
+LD <- c(cbf = "small CBF", pd = "PD stand-in (asinh)", pd_raw = "PD stand-in, raw pressure")
+lad_tab <- do.call(rbind, lapply(names(LD), function(k) cbind(data = k, ladder[[k]]$table)))
 fp32_first <- lad_tab[lad_tab$precision == "fp32" & lad_tab$mode == "euclid", c("data", "first_flip", "flips", "drift")]
 fp64_flips <- lad_tab[lad_tab$precision == "fp64", c("data", "mode", "flips", "drift")]
-gap_small  <- sapply(ladder[c("cbf", "pd")], function(l) c(fp32 = mean(l$gap < 2^-23, na.rm = TRUE), fp64 = mean(l$gap < 2^-52, na.rm = TRUE), min = min(l$gap, na.rm = TRUE)))
+gap_small  <- sapply(ladder[names(LD)], function(l) c(fp32 = mean(l$gap < 2^-23, na.rm = TRUE), fp64 = mean(l$gap < 2^-52, na.rm = TRUE), min = min(l$gap, na.rm = TRUE)))
+raw32 <- lad_tab[lad_tab$data == "pd_raw" & lad_tab$mode == "euclid" & lad_tab$precision == "fp32", ]
+raw64 <- lad_tab[lad_tab$data == "pd_raw" & lad_tab$mode == "euclid" & lad_tab$precision == "fp64", ]
+raw32d <- lad_tab[lad_tab$data == "pd_raw" & lad_tab$mode == "dtw" & lad_tab$precision == "fp32", ]
 flip_words <- function(flips, S) if (flips == 0) sprintf("the same winner at every one of the %s steps", format(S, big.mark = ",")) else sprintf("another winner at %d of the %s steps", flips, format(S, big.mark = ","))
 first_words <- function(r, S) if (is.na(r$first_flip)) sprintf("never chose a different winner in %s steps either, and ended within %s of the reference", format(S, big.mark = ","), formatC(r$drift, digits = 1, format = "e")) else sprintf("first chose a different winner at step %d and then went its own way (prototypes %s apart at the end)", r$first_flip, formatC(r$drift, digits = 1, format = "e"))
 e1 <- function(x) formatC(x, digits = 1, format = "e")
@@ -210,9 +214,9 @@ series. It has three parts:
 2. **A demonstrator** (Sections 4 to 7): the online SOM rewritten once, with
    nine distances in the winner choice *and* in the update, six training
    ingredients that each test one idea, four map sizes, all the project's
-   measures plus trustworthiness, continuity and detection AUROC, on three
-   data sets (a CBF, a synthetic stand-in for the partial discharges, and
-   three-axis gestures), `r p$seeds` seeds each, every variant judged against
+   measures plus trustworthiness, continuity and detection AUROC, on
+   `r length(datasets)` data sets (`r paste(sapply(datasets, "[[", "title"), collapse = "; ")`),
+   `r p$seeds` seeds each, every variant judged against
    its family's control with the same start and order of items.
 3. **The precision ladder** (Section 8): the same map in fp32, fp64, 80-bit,
    128-bit and `r p$mpfr_bits`-bit MPFR arithmetic, step by step.
@@ -265,17 +269,27 @@ series. It has three parts:
   The closest contest of the PD run had a relative gap of
   `r e1(gap_small["min", "pd"])` between the first and the second distance,
   `r if (gap_small["fp32", "pd"] == 0) "never inside fp32's resolution" else sprintf("inside fp32's resolution in %s of the steps", pct(gap_small["fp32", "pd"]))`
-  and `r if (gap_small["fp64", "pd"] == 0) "never inside fp64's" else sprintf("inside fp64's in %s", pct(gap_small["fp64", "pd"]))`. MPFR is a reference oracle
+  and `r if (gap_small["fp64", "pd"] == 0) "never inside fp64's" else sprintf("inside fp64's in %s", pct(gap_small["fp64", "pd"]))`.
+  The one case built to fail is raw pressure without the asinh scale, four
+  decades in one squared distance: there fp32
+  `r if (is.na(raw32$first_flip)) sprintf("still chose the reference's winner at every step, within %s", e1(raw32$drift)) else sprintf("chose another winner at %d of %s steps, the first at step %d", raw32$flips, format(ladder$pd_raw$S, big.mark = ","), raw32$first_flip)`,
+  and fp64 `r if (raw64$flips == 0) "none" else sprintf("%d", raw64$flips)`. MPFR is a reference oracle
   (`r sprintf("%.1f", mpfr_secs)` s in C for what fp64 does in
   `r sprintf("%.2f", fp64_secs)` s), not a training tool; the precision
   question that matters for a field detector is the other way round, fp32 or
   fixed point on a microcontroller, with fp64 as the oracle.
-* **What to build first** (Section 9): the distance study on the real PD
-  waveforms and real gestures, the amplitude-blind novelty detector, the two
-  temperatures tested inside the growing DTW-SOM (a test, not a bet: they
-  did not beat the fixed map's controls here), and a GNG-style edge rule as
-  the principled form of tear-and-rejoin. Not first: chaos, tearing by link
-  length, MPFR training, momentum.
+* **What to build first** (Section 9), in the order the brainstorm's
+  skeptics and synthesizer settled on: read the cached maps on held-out
+  items with per-class confusion, detection AUROC and a sign test over the
+  seeds, before any new map; then the representation ladder for partial
+  discharges on the real waveforms (pulse features, envelope and
+  log-spectrum, loudness as a separate coordinate, a loudness-only control);
+  then shift rather than warp (SBD, or a 2 to 3% band) against the 10%
+  DTW-SOM; then Heskes' energy-consistent winner at a smaller start radius;
+  and for movement, dependent against independent multichannel DTW under
+  the 1-NN DTW ceiling. Tier B: soft-DTW's barycentre, LVQ fine-tuning,
+  U*-matrix clusters, TWED and MSM. Not first: chaos, tearing of any kind,
+  MPFR training, momentum, the torus, conscience.
 </div>
 
 # 1. What the benchmarks already decided
@@ -311,7 +325,7 @@ lessons <- data.frame(
                            "The band is 10% of the length everywhere here, as in the benchmark; the window study is tier A of the roadmap.",
                            "The annealed winner and the lattice variants are read on TE and KL next to QE.",
                            "Every ingredient below has a mechanism and a control; the two temperatures (Sections 3 and 4) are the principled replacements.",
-                           "Tear-and-rejoin returns as a rule by data support (GNG edges), not by link length.",
+                           "Tear-and-rejoin came back as a rule by data support (GNG edges), a fracture criterion and a jigsaw step; the skeptics dropped all three (Section 3b). Its successor reads the walls off the U*-matrix after training.",
                            "Every map is judged with the Euclidean distance, with DTW and with its own; detection uses the own distance.",
                            "Every chart has a map-size axis; the strips compare a variant with its control at the same size and seed.",
                            "The growing DTW-SOM is the vehicle for the winners of this page; it is not rebuilt here."),
@@ -399,8 +413,17 @@ if (is.null(ideas)) {
   cat("The catalogue (next_steps/ideas/ideas.json) is not in this checkout.")
 } else {
   fold <- function(s, n = 90) ifelse(nchar(s) > n, sprintf("<details><summary>%s&hellip;</summary>%s</details>", substr(s, 1, n), s), s)
+  # what this page already ran, by idea (the critic's point: a kept idea that the demonstrator tested is not new)
+  RAN <- list(`L3-cosine-correlation-shape-loudness` = "Sections 6, 7: cosine and correlation (without the loudness coordinate)",
+              `L6-sbd-one-global-shift` = "Sections 6, 7: SBD", `PD5-shift-not-warp` = "Sections 6, 7: SBD (the shift; not the narrow band)",
+              `L1-manhattan-huber` = "Section 6: Manhattan, the clipped pull, and both", `L5-soft-dtw-gradient-update` = "Section 6: soft-DTW SOM",
+              `L2-soft-dtw-free-energy` = "Section 6: soft-DTW SOM", `L1-free-energy-winner` = "Section 6: the annealed winner (soft arm only)",
+              `L6-novelty-detection` = "Section 7, with non-map controls", `PD6-novelty-score` = "Section 7 (one threshold, no per-unit thresholds)",
+              `L2-trust-continuity` = "Section 6: trustworthiness and continuity columns", `PD11-precision` = "Section 8, including raw pressure",
+              `L8-multivariate-dtw-dependent-vs-independent` = "Section 6: dependent DTW only (the gestures)", `L3-magnification-control` = "Section 6: conscience (the equal-use end)")
+  ran_of <- function(id) if (!is.null(RAN[[id]])) RAN[[id]] else "not yet"
   it <- do.call(rbind, lapply(ideas$ideas, function(i) data.frame(
-    Tier = i$tier, Lens = i$lens, Idea = sprintf("<b>%s</b>", i$title),
+    Tier = i$tier, Lens = i$lens, Idea = sprintf("<b>%s</b>", i$title), `In this page` = ran_of(i$id),
     `What it changes` = fold(paste(i$what_it_changes, i$mechanism)), `For partial discharges` = fold(i$why_pd),
     `For movement` = fold(i$why_movement), `The control to beat` = fold(i$control), `How to test` = fold(i$how_to_test),
     Cost = fold(i$cost, 60), `Expected gain` = i$expected_gain, Confidence = sprintf("%.2f", i$confidence),
@@ -408,8 +431,8 @@ if (is.null(ideas)) {
     References = fold(paste(unlist(i$anchors), collapse = "; "), 60), stringsAsFactors = FALSE, check.names = FALSE)))
   it <- it[order(match(it$Tier, c("A", "B", "C")), -as.numeric(it$Confidence)), ]
   chip_js <- JS("function(data, type) { if (type !== 'display') return data; return '<span class=\"chip ' + data + '\">' + data + '</span>'; }")
-  filtered_table(it, c("Tier", "Lens"), id = "ideas-table", escape = FALSE, dom = "ti", page_length = 100,
-                 column_defs = list(list(render = chip_js, targets = 0), list(width = "12%", targets = 2), list(width = "16%", targets = 3)),
+  filtered_table(it, c("Tier", "Lens", "In this page"), id = "ideas-table", escape = FALSE, dom = "ti", page_length = 100,
+                 column_defs = list(list(render = chip_js, targets = 0), list(width = "12%", targets = 2), list(width = "14%", targets = 4)),
                  ordering = TRUE, paging = FALSE)
 }
 ```
@@ -463,37 +486,63 @@ the right step for L1, L2, Chebyshev and Minkowski alike; what changes is
   series (the log-spectrum or the envelope of a pulse, where the ringing
   frequency and the decay become positions).
 
-## 3b. The map: growing, tearing, rejoining, done by data support
+## 3b. The map: growing, tearing, rejoining, and what the skeptics left of it
 
 The project's growing DTW-SOM won on fit, order and timing; its tearing map
 lost to a smaller start radius because a link broken by *length* is the
-same knob as a weaker pull, applied unevenly. The structural ideas that
-survived the skeptics share one principle: **let the data, not a threshold on
-length, decide what is connected.**
+same knob as a weaker pull, applied unevenly. Tear-and-rejoin came back
+from three angles in the brainstorm (GNG edge ageing by data support, a
+Griffith fracture criterion on the stored strain of a link, a jigsaw step
+that re-seats torn pieces before they rejoin) and every version was dropped
+by its skeptic: the ageing rule's lifetime is a second schedule with no
+scale of its own, the fracture rule re-parametrises the length rule, and the
+jigsaw rests on a hypothesis that the tear-and-join report contradicts
+(rejoined late, the disorder stays). The honest successor leaves the pull
+alone and finds the walls *after* training: cluster extraction from the
+U*-matrix, distance times density (Ultsch), in place of the Ward cut, tier B.
+The completeness critic reinstated one version at tier B, because the user
+asked for it and the project's own untested list names cutting by data
+support: GNG ageing on the hexagonal lattice with the lifetime set from the
+data (an edge survives as long as its two units take, on average, to win
+again), the pull following graph distance over the live edges, against the
+fixed lattice, on the three blobs where tearing helped and on the 18 sets
+where it did not, with the number of pieces counted as in the tearing lab.
+That is the one run that closes the question either way. The critic also
+reinstated the window per unit for the growing map (each unit's band set
+from the shifts of the items it won, births inheriting the parent's band)
+and kept the torus as the rim control for Heskes' winner and for the
+topographic product, which reacts to the outline of a map.
 
-* **Growing neural gas (Fritzke 1995) edges on the SOM lattice.** An edge
-  between two units is born when they are the winner and runner-up of an
-  item, and it ages every step it is not; old edges die. This is tear-and-
-  rejoin as the user wants it, with a reason for every tear and every
-  rejoin: an edge is kept exactly as long as items keep landing on both ends.
-  The control: the growing DTW-SOM with its fixed lattice; the test: QE, TE,
-  KL and the number of pieces on the three-blob data where tearing helped
-  and on the 18 sets where it did not.
-* **Pruning idle units and a stop rule** (the project lists both as
-  untested): remove a unit that wins nothing for a full pass; stop growing
-  when a new unit no longer lowers the Kaski-Lagus error on held-out seeds.
-* **A torus** for cyclic data: when the PD data carry the mains phase, the
-  map's one axis should be a circle. Section 6 tests the plain torus against
-  the rectangular sheet (its control); on data with no cycle it should not
-  help, and the rim effects it removes should show in TE.
-* **Conscience** (DeSieno 1988): a unit that wins too often is handicapped.
-  It targets dead units and unequal classes (quiet corona against loud
-  air-gap discharges); a neighbourhood already prevents most dead units, so
-  the expected gain is small and the test is cheap.
-* **LVQ fine-tuning** when labels exist: Kohonen's LVQ1 after the
-  unsupervised map, moving prototypes a little towards their own class and
-  away from others; the control is the unsupervised map read by Ward
-  clustering, the measure purity and ARI on held-out items.
+What survived for the map itself:
+
+* **Heskes' winner** (tier A): the unit whose whole neighbourhood fits the
+  item best wins, the minimum over k of &Sigma;<sub>j</sub>
+  h<sub>kj</sub> d<sub>j</sub><sup>2</sup>, instead of the nearest unit. It
+  makes the online SOM a gradient descent on one energy (Heskes 1999), costs
+  no extra alignment (the distances are there already), and is the pairing
+  that could buy fit at a smaller start radius without the order cost the
+  project measured. Control: the plain map at the same start radius and at
+  the default.
+* **A growth-stop rule and idle-unit pruning** in the growing map (tier B):
+  stop when a new unit no longer lowers the Kaski-Lagus error on held-out
+  seeds; remove a unit that wins nothing for a full pass.
+* **LVQ fine-tuning** when labels exist (tier B): Kohonen's LVQ1 after the
+  unsupervised map, prototypes moved a little towards their own class and
+  away from the others. Control: the map read by Ward clustering; purity and
+  ARI on held-out items.
+* **Median and relational SOMs** (tier B): prototypes that are real series,
+  so that any dissimilarity serves, including TWED and MSM, which have no
+  barycentre to average with.
+* **Online ordering, then batch convergence** (tier B): the online schedule
+  down to its radius floor, then DBA passes at frozen winners: the fit of
+  batch training without its disorder.
+* **Dropped, and run here anyway** (Section 6): conscience (the chaotic-units
+  report already ran the bounded control, and no unit was dead to rescue)
+  and the torus (the rim errors it removes are the harmless kind). Neither
+  beat its control in the demonstrator. Dropped and not run: DTW neural gas
+  (between the SOM and k-means by construction), bagged maps (lattice
+  alignment is ill-posed on the offset hexagonal grid), a learned band per
+  unit (units with different bands do not compete on one scale).
 
 ## 3c. Physics: two temperatures, one tension, and the metaphors
 
@@ -529,6 +578,12 @@ code:
   already plays part of this role, which is why the experiment, not the
   argument, decides whether annealing on top of a radius schedule buys
   anything: Section 6.
+* <span class="chip exact">exact</span> **Heskes' winner is the zero-temperature
+  limit of that assignment.** Take the unit with the lowest energy
+  E<sub>k</sub> and let it win: the SOM then minimises one function, and the
+  contest costs nothing beyond the distances already computed. The brainstorm
+  ranks it tier A and the annealed version tier C: the hard arm first, the
+  temperature only if the hard arm pays.
 * <span class="chip exact">exact</span> **Magnification.** A 1-D SOM places
   prototypes with density p(x)<sup>2/3</sup> (Ritter & Schulten 1986), not
   p(x): it under-represents dense regions and over-represents sparse ones.
@@ -539,20 +594,23 @@ code:
 * <span class="chip metaphor">metaphor</span> **Springs and fracture.** The
   lattice as springs between prototypes with the neighbourhood as the
   stiffness, and a link that tears when its strain energy exceeds a Griffith
-  threshold. Honest reading: the stiffness *is* the radius, and a tear by
-  stored energy is a tear by length squared, the project's rule with another
-  exponent. The elastic net of Durbin & Willshaw (1987) is the exact version
-  of this energy for the ring; for a sheet the useful part of the idea is
-  healing by data support, which is the GNG rule of Section 3b.
+  threshold. Honest reading, and the skeptic's: the stiffness *is* the
+  radius, and a tear by stored energy is a tear by length squared, the
+  project's rule with another exponent. The elastic net of Durbin & Willshaw
+  (1987) is the exact version of this energy for the ring; for a sheet it
+  adds a knob, not a reason, and it was dropped.
 * <span class="chip metaphor">metaphor</span> **Inertia (momentum).** A
-  prototype that keeps a velocity. Cheap to test (Section 6), no mechanism
-  that says it should help an online map with a decaying rate, and a known
-  way to overshoot small clusters.
+  prototype that keeps a velocity. Cheap, so it ran in Section 6; the
+  skeptic's reading is that momentum with a constant factor is a learning
+  rate of &alpha;/(1 &minus; &mu;) with a lag, a reparametrisation of the
+  schedule, and the results agree: no direction.
 * <span class="chip metaphor">metaphor</span> **Replica exchange.** Several
   maps at different temperatures that swap; for a SOM this is *restarts with
   the best map kept*, which the ring experiments already found to be the
-  working part of CHAOSOM. The principled version keeps the map with the
-  lowest energy in Heskes' sense, not the shortest tour.
+  working part of CHAOSOM. Dropped: the replicas would be deterministic-
+  annealing runs, and the swap rule has nothing to decide that the energy
+  of a single run does not. Keep the restarts, keep the best map by Heskes'
+  energy, drop the exchange.
 
 ## 3d. Precision and the opposite direction
 
@@ -570,7 +628,14 @@ same whichever path is taken, and the warp differs only at ties that the
 update then averages. The other direction is the one that matters for a
 detector in the field: a map stored and evaluated in fp32, fp16 or
 fixed-point integers on a microcontroller, with fp64 as the oracle. The
-ladder of Section 8 is that oracle test run upwards.
+ladder of Section 8 is that oracle test run upwards. The brainstorm's one
+tier-A idea here is about the data, not the arithmetic: asinh(p / 1 mPa) is
+a companding law that turns four decades of loudness into about ten units,
+and the question worth a table is how many bits of each class survive it
+after the map's distance has done its work, which is also the question of
+whether the map is a loudness meter that will not transfer out of the
+anechoic chamber (Section 3a's loudness-only control answers the same
+thing from the other side).
 
 ## 3e. Measuring across map sizes and for detection
 
@@ -589,9 +654,29 @@ ladder of Section 8 is that oracle test run upwards.
 * **Detection**: train on the background, score every item by its distance
   to the winner, read the ROC. AUROC overall and per class: the per-class
   numbers show which discharges the map would miss.
-* **Wins seed by seed** are counts, not p-values; with
-  `r p$seeds` seeds, "better on all seeds" is the only strong statement, and
-  a difference inside the seed-to-seed spread is noise whatever its sign.
+* **Read the map on items it never saw.** Every ARI in the project's reports,
+  and every one on this page, is on the training items with the number of
+  classes given. The brainstorm's first experiment is to read held-out items
+  (the seed's draw of items leaves a fold out), with a per-class confusion
+  matrix and the detection AUROC, on the cached benchmarks: no retraining,
+  and it may re-rank verdicts, because the project itself found part of
+  DTW's gain in reading the map rather than training it.
+* **One decision rule, stated once.** Wins seed by seed are counts, not
+  p-values; under a two-sided sign test 7 of 10 seeds is p = 0.34 and 8 of
+  10 is p = 0.11. So: a *win* is 9 or 10 of 10 seeds (or a paired Wilcoxon
+  test at p < 0.05 whose confidence interval excludes zero); 7 or 8 of 10 is
+  *undecided* and triggers a 30-seed rerun; *level* is an equivalence
+  verdict, not an absence of evidence. With the `r p$seeds` seeds of this
+  knit only `r p$seeds` of `r p$seeds` (p = `r signif(2 / 2^p$seeds, 2)`) is a
+  statement at all, and a difference inside the seed-to-seed spread is noise
+  whatever its sign. The project's summary page would lose some of its
+  "helps" verdicts under this rule; that is the first thing to recount.
+* **Consensus over seeds** is the cheapest ARI the cached maps can give: a
+  co-association matrix over the ten Ward cuts of ten seeds, cut once, is an
+  ensemble that needs no training; its controls are the single map with the
+  lowest KL and a consensus of ten k-means runs, so that the gain is
+  attributed to the map or to the averaging. Trustworthiness and continuity as computed here need at
+  least 19 sampled items for their normalisation; the sample is 300.
 
 ```{r ideas-dropped, results = "asis"}
 if (!is.null(ideas) && length(ideas$dropped)) {
@@ -896,6 +981,8 @@ filtered_table(out, c("Data set", "Map", "Variant", "Judge"), id = "all-numbers"
 # the sentences of the box below, from the results
 best_by <- function(k, view, size = REF) { b <- best_variant(k, size, view); sprintf("%s (%s)", b$label, formatC(b$value, digits = 2, format = "f")) }
 ctrl_of <- function(k, view, size = REF) formatC(mean_of(k, "euclid", size, view), digits = 2, format = "f")
+soft_vs_dtw <- sapply(names(datasets), function(k) wins_of(k, "softdtw", REF, "qe_dtw"))
+anneal_te <- sapply(names(datasets), function(k) wins_of(k, "anneal", REF, "te_own")); anneal_qe <- sapply(names(datasets), function(k) wins_of(k, "anneal", REF, "qe_eu"))
 cos_pd <- wins_of("pd", "cosine", REF, "ari_own"); sbd_pd <- wins_of("pd", "sbd", REF, "ari_own"); l1_pd <- wins_of("pd", "manhattan", REF, "ari_own")
 dtw_pd_wins <- wins_vs("pd", "dtw", "euclid", REF, "ari_own")
 sbd_ge <- wins_of("gestures", "sbd", REF, "ari_own"); dtw_ge <- wins_vs("gestures", "dtw", "euclid", REF, "ari_own"); cor_ge <- wins_of("gestures", "correlation", REF, "ari_own")
@@ -971,28 +1058,46 @@ discharge should land far from every prototype of noise. Each variant,
 against noise, overall and per kind:
 
 ```{r detection, fig.height = 5}
+BASE_LAB <- c(base_peak = "Control: loudness (peak of the series)", base_1nn_euclid = "Control: nearest noise item, Euclidean",
+              base_1nn_cosine = "Control: nearest noise item, cosine", base_1nn_dtw = "Control: nearest noise item, DTW")
+det_lab <- function(v) if (v %in% names(VARIANTS)) VARIANTS[[v]]$label else BASE_LAB[[v]]
 dv <- names(VARIANTS); da <- aggregate(. ~ variant, data = det[, c("variant", grep("^AUROC", names(det), value = TRUE))], FUN = mean)
 da <- da[order(-da$AUROC), ]
-pl <- plot_ly(height = 420)
+pl <- plot_ly(height = 480)
 for (v in da$variant) {
-  d <- det[det$variant == v, ]
-  pl <- add_trace(pl, x = d$AUROC, y = rep(VARIANTS[[v]]$label, nrow(d)), type = "scatter", mode = "markers", name = VARIANTS[[v]]$label, showlegend = FALSE,
-                  marker = list(color = PAL[match(v, dv)], size = 10, opacity = 0.8, line = list(color = "#ffffff", width = 1.5)),
-                  text = sapply(seq_len(nrow(d)), function(i) sprintf("<b>%s</b>, seed %d<br>AUROC %.3f<br>%s", VARIANTS[[v]]$label, d$seed[i], d$AUROC[i],
+  d <- det[det$variant == v, ]; is_base <- !(v %in% dv)
+  pl <- add_trace(pl, x = d$AUROC, y = rep(det_lab(v), nrow(d)), type = "scatter", mode = "markers", name = det_lab(v), showlegend = FALSE,
+                  marker = list(color = if (is_base) MUTED else PAL[match(v, dv)], size = if (is_base) 12 else 10, symbol = if (is_base) "diamond" else "circle",
+                                opacity = 0.85, line = list(color = "#ffffff", width = 1.5)),
+                  text = sapply(seq_len(nrow(d)), function(i) sprintf("<b>%s</b>%s<br>AUROC %.3f<br>%s", det_lab(v), if (is_base) "" else sprintf(", seed %d", d$seed[i]), d$AUROC[i],
                                  paste(sprintf("%s %.2f", sub("AUROC_", "", grep("^AUROC_", names(d), value = TRUE)), as.numeric(d[i, grep("^AUROC_", names(d))])), collapse = ", "))),
                   hovertemplate = "%{text}<extra></extra>")
 }
-chart(pl, xaxis = ax("AUROC of the distance to the winner as a discharge alarm (1 = perfect, 0.5 = chance)", range = c(0, 1.02)),
-      yaxis = ax(NULL, categoryorder = "array", categoryarray = rev(sapply(da$variant, v_lab)), ticksuffix = "  "),
-      shapes = list(list(type = "line", x0 = 0.5, x1 = 0.5, yref = "paper", y0 = 0, y1 = 1, line = list(color = AXIS, dash = "dot"))), margin = list(t = 20, l = 200)) |> slim()
-dat <- da; dat$variant <- sapply(dat$variant, v_lab); names(dat) <- c("Variant", "AUROC, all discharges", paste("AUROC,", sub("AUROC_", "", names(dat)[-(1:2)])))
+chart(pl, xaxis = ax("AUROC of the score as a discharge alarm (1 = perfect, 0.5 = chance)", range = c(0, 1.02)),
+      yaxis = ax(NULL, categoryorder = "array", categoryarray = rev(sapply(da$variant, det_lab)), ticksuffix = "  "),
+      shapes = list(list(type = "line", x0 = 0.5, x1 = 0.5, yref = "paper", y0 = 0, y1 = 1, line = list(color = AXIS, dash = "dot"))), margin = list(t = 20, l = 250)) |> slim()
+dat <- da; dat$variant <- sapply(dat$variant, det_lab); names(dat) <- c("Score", "AUROC, all discharges", paste("AUROC,", sub("AUROC_", "", names(dat)[-(1:2)])))
 tab(dat, search = FALSE, digits = setNames(as.list(rep(3, ncol(dat) - 1)), names(dat)[-1]))
+det_som <- det[det$variant %in% dv, ]
+det_mean <- function(v) mean(det$AUROC[det$variant == v])
+det_best <- names(which.max(sapply(dv, det_mean)))
+base_best <- names(which.max(sapply(names(BASE_LAB), det_mean)))
 ```
+
+Grey diamonds are the controls that are not maps: the loudness of the
+series as the alarm (the first detector a PD engineer would try), and the
+distance to the nearest noise item under the Euclidean, cosine and DTW
+distances (a noise item is scored against the other noise items). A map
+earns its place only above those.
 
 <div class="box">
 
-* The `r v_lab(det_best)` map is the best alarm (AUROC `r f3(det_mean(det_best))`);
-  the online SOM reaches `r f3(det_mean("euclid"))`. Per kind, the Euclidean
+* The `r v_lab(det_best)` map is the best alarm among the maps (AUROC
+  `r f3(det_mean(det_best))`); the online SOM reaches `r f3(det_mean("euclid"))`.
+  The best control that is not a map is `r tolower(sub("Control: ", "", BASE_LAB[[base_best]]))`
+  (`r f3(det_mean(base_best))`), the loudness threshold alone
+  `r f3(det_mean("base_peak"))`:
+  `r if (det_mean(det_best) > det_mean(base_best) + 0.01) "the map adds something over the nearest-neighbour score under the same distance" else if (det_mean(det_best) >= det_mean(base_best) - 0.01) "the map and the nearest-neighbour score under the same distance are level, so the distance is the finding, not the map" else "the nearest-neighbour score beats the map, so the distance is the finding and the map costs accuracy for its summary"`. Per kind, the Euclidean
   alarm scores `r f3(det_corona_eu)` on corona`r if (det_corona_eu < 0.5) ": below 0.5 means a corona pulse lies *closer* to the noise prototypes than noise does, because it is quiet and a Euclidean distance is mostly loudness" else ""`.
   An amplitude-blind distance (cosine, correlation, SBD) asks about the shape
   instead`r if (det_corona_eu < 0.5) ", and the quiet pulses come back" else ""`.
@@ -1007,8 +1112,9 @@ tab(dat, search = FALSE, digits = setNames(as.list(rep(3, ncol(dat) - 1)), names
 
 ```{r ladder-table}
 lt <- lad_tab
-lt$data <- ifelse(lt$data == "cbf", sprintf("%s, %d x %d, %d passes", small_cbf$title, LADDER$cbf$size, LADDER$cbf$size, LADDER$cbf$rlen),
-                  sprintf("partial-discharge stand-in (600 x 125), %d x %d, %d passes", LADDER$pd$size, LADDER$pd$size, LADDER$pd$rlen))
+lt$data <- c(cbf = sprintf("%s, %d x %d, %d passes", small_cbf$title, LADDER$cbf$size, LADDER$cbf$size, LADDER$cbf$rlen),
+             pd = sprintf("partial-discharge stand-in (600 x 125, asinh scale), %d x %d, %d passes", LADDER$pd$size, LADDER$pd$size, LADDER$pd$rlen),
+             pd_raw = sprintf("the same pulses as raw pressure in mPa (no asinh), %d x %d, %d passes", LADDER$pd_raw$size, LADDER$pd_raw$size, LADDER$pd_raw$rlen))[lt$data]
 lt$drift <- formatC(lt$drift, digits = 2, format = "e"); lt$flip_share <- NULL
 names(lt) <- c("Data", "Distance", "Arithmetic", "Reference", "First step with another winner", "Steps with another winner", "Largest difference of a prototype", "QE", "TE", "Seconds")
 tab(lt, search = FALSE, digits = list(QE = 4, TE = 4, Seconds = 2))
@@ -1022,19 +1128,20 @@ in R with the Rmpfr package, an independent check of that code. The largest
 difference of a prototype is over all units and all values at the end.
 
 ```{r ladder-curves, fig.height = 4.6}
-cv <- rbind(cbind(data = "cbf", ladder$cbf$curves), cbind(data = "pd", ladder$pd$curves))
+cv <- do.call(rbind, lapply(names(LD), function(k) cbind(data = k, ladder[[k]]$curves)))
 cv$drift[cv$drift <= 0] <- NA
 precs <- unique(cv$precision)
 pl <- plot_ly(height = 400)
-for (dk in c("cbf", "pd")) for (mo in c("euclid", "dtw")) for (pr in precs) {
+for (dk in names(LD)) for (mo in c("euclid", "dtw")) for (pr in precs) {
   d <- cv[cv$data == dk & cv$mode == mo & cv$precision == pr, ]
   if (!nrow(d) || all(is.na(d$drift))) next
   pl <- add_trace(pl, x = d$step, y = d$drift, type = "scatter", mode = "lines+markers", name = pr, legendgroup = pr, showlegend = dk == "cbf" && mo == "euclid",
                   visible = dk == "cbf" && mo == "euclid", line = list(color = PAL[match(pr, precs)], width = 2), marker = list(color = PAL[match(pr, precs)], size = 6),
                   text = sprintf("%s, %s<br>step %d: largest difference %.2e", pr, mo, d$step, d$drift), hovertemplate = "%{text}<extra></extra>")
 }
-groups <- unlist(lapply(c("cbf", "pd"), function(dk) lapply(c("euclid", "dtw"), function(mo) sapply(precs, function(pr) { d <- cv[cv$data == dk & cv$mode == mo & cv$precision == pr, ]; nrow(d) > 0 && !all(is.na(d$drift)) }))), recursive = FALSE)
-keys4 <- c("cbf euclid", "cbf dtw", "pd euclid", "pd dtw"); labs4 <- c("small CBF, Euclidean", "small CBF, DTW", "PD stand-in, Euclidean", "PD stand-in, DTW")
+groups <- unlist(lapply(names(LD), function(dk) lapply(c("euclid", "dtw"), function(mo) sapply(precs, function(pr) { d <- cv[cv$data == dk & cv$mode == mo & cv$precision == pr, ]; nrow(d) > 0 && !all(is.na(d$drift)) }))), recursive = FALSE)
+keys4 <- as.vector(outer(c("euclid", "dtw"), names(LD), function(m, d) paste(d, m)))[c(1, 2, 3, 4, 5, 6)]
+labs4 <- as.vector(t(outer(unname(LD), c("Euclidean", "DTW"), paste, sep = ", ")))
 vis_all <- unlist(lapply(seq_along(groups), function(i) rep(i, sum(groups[[i]]))))
 buttons <- lapply(seq_along(keys4), function(i) list(method = "restyle", label = labs4[i], args = list(list(visible = vis_all == i))))
 chart(pl, xaxis = ax("training step (log scale)", type = "log"), yaxis = ax("largest difference from the reference (log)", type = "log", exponentformat = "power"),
@@ -1042,8 +1149,7 @@ chart(pl, xaxis = ax("training step (log scale)", type = "log"), yaxis = ax("lar
 ```
 
 ```{r gap-hist, fig.height = 3.8}
-gh <- rbind(data.frame(data = "small CBF", mode = "Euclidean", gap = ladder$cbf$gap), data.frame(data = "small CBF", mode = "DTW", gap = ladder$cbf$gap_dtw),
-            data.frame(data = "PD stand-in", mode = "Euclidean", gap = ladder$pd$gap), data.frame(data = "PD stand-in", mode = "DTW", gap = ladder$pd$gap_dtw))
+gh <- do.call(rbind, lapply(names(LD), function(k) rbind(data.frame(data = LD[[k]], mode = "Euclidean", gap = ladder[[k]]$gap), data.frame(data = LD[[k]], mode = "DTW", gap = ladder[[k]]$gap_dtw))))
 gh <- gh[is.finite(gh$gap) & gh$gap > 0, ]
 pl <- plot_ly(height = 330)
 i <- 0
@@ -1091,6 +1197,16 @@ gap_pd <- gap_small[, "pd"]
   on. Where a winner does flip, the map that follows is a different map, not
   a worse one: the spread between seeds is far larger than the spread between
   arithmetics.
+* **Raw pressure is the case built to fail, and it is the one to watch.**
+  Without the asinh scale the loudest sample of an air-gap pulse squared is
+  10<sup>8</sup> times a corona sample squared, so one squared distance mixes
+  numbers that fp32 cannot add. On the same pulses as raw pressure fp32
+  `r if (is.na(raw32$first_flip)) sprintf("still chose the reference's winner at every step (drift %s)", e1(raw32$drift)) else sprintf("chose another winner at %d of %s steps, the first at step %d, and drifted to %s", raw32$flips, format(ladder$pd_raw$S, big.mark = ","), raw32$first_flip, e1(raw32$drift))`;
+  under DTW `r if (is.na(raw32d$first_flip)) "no other winner" else sprintf("another winner first at step %d", raw32d$first_flip)`;
+  fp64 `r if (raw64$flips == 0) "still agreed with the reference at every step" else sprintf("differed at %d steps", raw64$flips)`.
+  The lesson is the project's asinh scale, not a precision upgrade: compand
+  the data and fp32 is enough; feed a map raw pressure over four decades and
+  fp32 is not, but neither is the map, because it is then a loudness meter.
 * **fp64 data make no difference either.** Rounding every value of the data
   (items and start alike) to fp32 and training in fp64 gave `r d32$flips`
   other winners on the PD stand-in and `r d32c$flips` on CBF: the data of a
@@ -1114,10 +1230,10 @@ gap_pd <- gap_small[, "pd"]
 
 ```{r tiers, results = "asis"}
 if (!is.null(ideas) && length(ideas$tiers)) {
+  title_of <- function(id) { i <- Filter(function(x) x$id == id, ideas$ideas); if (length(i)) i[[1]]$title else id }
   for (t in ideas$tiers) {
-    cat(sprintf("**Tier %s.** %s\n\n", t$tier, t$rationale))
-    for (id in t$ids) { i <- Filter(function(x) x$id == id, ideas$ideas); if (length(i)) cat(sprintf("* **%s** (%s): %s *Control:* %s\n", i[[1]]$title, i[[1]]$lens, i[[1]]$what_it_changes, i[[1]]$control)) }
-    cat("\n")
+    cat(sprintf("**Tier %s.** %s\n\n", t$tier, gsub("\n+", "\n\n", t$rationale)))
+    cat(sprintf("<p class='note'>Ideas of this tier (%d): %s.</p>\n\n", length(t$ids), paste(sapply(t$ids, title_of), collapse = " &middot; ")))
   }
   cat("<details><summary>The five to start with for partial discharges, and the five for movement</summary>\n\n")
   pick <- function(ids) paste(sapply(ids, function(id) { i <- Filter(function(x) x$id == id, ideas$ideas); if (length(i)) i[[1]]$title else id }), collapse = "; ")
@@ -1131,35 +1247,69 @@ if (!is.null(ideas) && length(ideas$tiers)) {
 variant against the control that does the same job without the new
 ingredient, the start and the order of items drawn from the seed, every map
 judged with the Euclidean distance, with DTW and with its own, QE next to TE
-(or KL), ARI when the classes are known, AUROC and the per-class misses when
-the question is detection; counts of seeds better and worse, never a mean
-alone; and the same experiment at two map sizes, because Section 6 shows the
-ranking move with the size.
+(or KL), ARI when the classes are known and now on held-out items, AUROC and
+the per-class misses when the question is detection; counts of seeds better
+and worse with a sign test, never a mean alone; and the same experiment at
+two map sizes, because Section 6 shows the ranking move with the size.
 
-1. **The distance study on the real waveforms** (tier A, a day): the nine
-   distances of this page on the project's `pd_acoustic` and on the gestures
-   you care about, 10 &times; 10, 10 seeds, with the detection test of
-   Section 7 and the 1-NN floor. Expect cosine, correlation and SBD to lead
-   detection and DTW or SBD to lead classification; then try the loudness as
-   a weighted extra channel, which no amplitude-blind distance can see.
-2. **Port the two temperatures into the growing DTW-SOM** (tier A, two
-   days): soft-DTW in the winner choice and the births (a soft barycentre is
-   a better medoid than the DTW medoid of the worse half), and the annealed
-   winner during growth, where a wrong early winner costs the most. Control:
-   the growing DTW-SOM as it is.
-3. **GNG edges on the lattice** (tier B): edges born of winner and runner-up,
-   aged every step, dead when old; pieces counted as in the tearing lab.
-   Control: the same map with its fixed links. If it does not beat the fixed
-   lattice on the three blobs *and* stay level on the 18 sets, tearing is
-   closed.
-4. **The window per unit** (tier B): the project's own untested idea, now
-   with a reason: a unit's band is the spread of the onsets of the items it
-   won, so trigger-aligned pulses get a narrow band and gestures a wide one.
-5. **Downwards precision** (tier B): the trained map in fp16 and in 16-bit
-   fixed point, winners against fp64, on the real PD data; the count of
-   flips and the AUROC are the scores.
-6. **Not worth the time** on the evidence here: MPFR training, momentum,
-   tearing by link length, chaos of any kind, and a PCA start.
+1. **Reading and statistics first** (tier A, a day, no training): the
+   cached benchmarks of the project and of this page read on held-out items,
+   with per-class confusion, the novelty AUROC against the non-map controls
+   of Section 7, consensus over the seeds, and the decision rule of Section
+   3e. The real PD set has 850 untouched waveforms per class beyond the 150
+   the benchmark drew: train on the 150, test on the 850, and report the
+   false-alarm rate at 1% with real counts. Expect some of the summary's
+   "helps" verdicts to become "undecided", and a 30-seed rerun of the few
+   that matter.
+2. **The representation ladder for partial discharges** (tier A, two days):
+   on the real waveforms, a map on pulse-shape features (rise, decay,
+   dominant frequency, energy, the time-frequency map of Contin and
+   colleagues), one on the envelope and the log-spectrum, one on the series
+   with loudness as a separate weighted coordinate, and the loudness-only
+   control (log peak, Ward cut), against the Euclidean and the DTW-SOM. If a
+   five-number map matches the DTW-SOM's ARI, the elastic family is moot on
+   this data. The demonstrator's evidence for this order: the amplitude-blind
+   distances led detection by a wide margin (Section 7). One question to the
+   data's owners first: do the recordings carry the mains phase, the apparent
+   charge or a timestamp per pulse? If they do, the phase-resolved pattern is
+   the field's standard feature and belongs in the ladder as a circular
+   coordinate, which is where the torus earns its place.
+3. **Shift, not warp** (tier A, a day): SBD and a 2 to 3% DTW band against
+   the 10% DTW-SOM on the real pulses, with a per-class histogram of the
+   best shift. Trigger-aligned pulses jitter by a few samples; that is a
+   shift, not a warp. In the demonstrator SBD was level with or ahead of the
+   DTW-SOM on the PD classes at a fraction of the cost (Section 6).
+4. **Heskes' winner** (tier A, two days): the energy-consistent winner at
+   half and a quarter of the start radius, against the plain map at the same
+   radius and at the default, on QE and TE together. The only change to the
+   map's own rule that the skeptics kept at tier A.
+5. **The input layer for movement** (tier A, two days): dependent against
+   independent multichannel DTW on real gesture sets, with the check that
+   dependent DTW at band 0 equals the stacked Euclidean map to the last bit,
+   the 1-NN DTW ceiling, per-class held-out confusion with leave-subjects-out
+   folds, and the engineer's control that PD has and movement lacked: a
+   Euclidean map on windowed features (per-axis mean, spread, energy,
+   dominant frequency, inter-axis correlations, the magnitude channel), with
+   a supervised ceiling on the same features.
+6. **Tier B, after the tables above**: soft-DTW's expected-alignment update
+   inside the growing map (hard winner kept), priced warps (TWED, MSM),
+   slope-constrained steps and open ends for gestures (with the project's
+   derivative-DTW variant as the control row, since it attacked the same
+   pinch and won once, on the solar I-V curves), LVQ fine-tuning, U*-matrix
+   cluster extraction, a growth-stop rule and idle-unit pruning, the window
+   per unit, GNG edges with a data-set lifetime (the one tear-and-rejoin
+   left standing), median and relational maps.
+   **One rule for all of them:** any ingredient that wins on the fixed map is
+   re-run inside the growing DTW-SOM, the project's best map, with its births
+   using the ingredient's own distance or barycentre, against the plain
+   growing map with the same seeds.
+7. **Tier C, one small run each**: 1-D Wasserstein on energy profiles,
+   coarse-to-fine training on the envelope, a streaming growing map, the
+   fixed-point Manhattan map for a field detector, the annealed winner, and
+   the precision ladder as a falsification test on the real data.
+8. **Not worth the time** on the evidence here and in the project: MPFR
+   training, momentum, tearing by any rule tried so far, chaos of any kind,
+   the torus, conscience, a PCA start.
 
 </div>
 
@@ -1184,6 +1334,17 @@ ranking move with the size.
   prior testing and fair controls, with references marked where they could
   not be checked. It ranks by expected value per hour of your time, which is
   a judgement, not a measurement.
+* **A contest's gap** (Section 8 and the last column of the big table) is
+  the second distance minus the first, over the magnitude of the first; for
+  soft-DTW, whose values can be negative, it is a ratio of the same kind but
+  not on the same scale as a distance.
+* **The measure list and the size grid are this page's, not the project's.**
+  The timing error (CBF), the spread (colours), the pieces (torn maps) and
+  the tour gap (rings) are not computed here, and the sizes are 5, 7, 10 and
+  14 a side where the benchmark used one rule of about 5&radic;N units. The
+  roadmap's tables should carry every set-specific measure whenever its set
+  is run, and keep CBF and the colours as sanity sets, because they catch
+  smearing and shape loss that the PD and gesture sets do not.
 * **Times** are from `r cores` parallel processes on this machine
   (`r format(n_maps, big.mark = ",")` maps in `r sprintf("%.0f", cpu_min)` CPU
   minutes); the number of comparisons is the fair cost.

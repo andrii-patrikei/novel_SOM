@@ -28,8 +28,8 @@
 //                 d_k (1 + beta (K p_k - 1)), with p_k the running share of wins of unit k; beta in [0, 1)
 //                 keeps the factor positive
 //   huber > 0     every component of the pull x - m is clipped to [-huber, huber] (a robust, L1-like step)
-//   momentum > 0  heavy-ball update: v = mu v + a h (x - m); m += v; a unit the item does not pull keeps
-//                 v = mu v, so every velocity decays every step
+//   momentum > 0  heavy-ball update: v = mu v + a h (x - m); m += v; a unit the item does not pull coasts:
+//                 v = mu v; m += v
 //   kahan         Neumaier-compensated sums in the pointwise distances (fp64 and below)
 //
 // [[Rcpp::plugins(cpp17)]]
@@ -283,7 +283,7 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
   std::vector<T> d(K), h((size_t) K * K), w(K), P(K), e(K), xw(D), scratch, pfreq(K, T(1) / T(K));
   std::vector<int> lag(K, 0), win(S), nearest(S), counts(K, 0);
   std::vector<int> snaps(snap_at.begin(), snap_at.end());
-  std::vector<double> gap(S);                                    // (d_2nd - d_1st) / d_1st: how close the contest was (absolute when d_1st = 0)
+  std::vector<double> gap(S);                                    // (d_2nd - d_1st) / |d_1st|: how close the contest was (absolute when d_1st = 0)
   List snapshots;
   long comparisons = 0;
   T last_r = -1;
@@ -310,7 +310,7 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
       T second = big<T>();
       for (int k = 0; k < K; k++) if (k != near && d[k] < second) second = d[k];
       T dn = d[near];
-      gap[s] = (K > 1 && second < big<T>() / 2) ? (double) ((second - dn) / (dn > 0 ? dn : T(1))) : NA_REAL;
+      gap[s] = (K > 1 && second < big<T>() / 2) ? (double) ((second - dn) / (dn != 0 ? t_abs(dn) : T(1))) : NA_REAL;
     }
     // 2. the winner, or the soft assignment
     int winner = near;
@@ -346,11 +346,11 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
     counts[winner]++;
     // 3. the update of every unit the item pulls
     for (int j = 0; j < K; j++) {
-      if (w[j] <= T(1e-10)) {                                      // not pulled: the velocity still decays
-        if (mu > 0) for (int k = 0; k < D; k++) V[(size_t) j * D + k] *= mu;
+      T* m = &M[(size_t) j * D];
+      if (w[j] <= T(1e-10)) {                                      // not pulled: the heavy ball coasts
+        if (mu > 0) for (int k = 0; k < D; k++) { T* v = &V[(size_t) j * D + k]; *v = mu * *v; m[k] += *v; }
         continue;
       }
-      T* m = &M[(size_t) j * D];
       item_for(x, m, o, scratch, lag[j], xw.data());
       T step = a * w[j];
       for (int k = 0; k < D; k++) {
