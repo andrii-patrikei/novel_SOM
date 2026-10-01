@@ -81,7 +81,7 @@ run_detection <- function(datasets, variants, sizes, seeds, rlen, cores, backgro
     keep <- ds$cls == background[[job$dataset]]
     bg <- ds; bg$X <- ds$X[keep, , drop = FALSE]; bg$cls <- droplevels(ds$cls[keep])
     fit <- train_map(bg, spec, job$size, job$seed, rlen = rlen)
-    ja <- judge_args(ds, "own", spec)
+    ja <- judge_args(bg, "own", spec)                                 # the scales the map was trained with
     score <- map_items(cross_dist(ds$X, fit$M, ds, ja))$dist
     pos <- !keep
     per_class <- sapply(setdiff(levels(ds$cls), background[[job$dataset]]), function(cl)

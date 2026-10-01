@@ -45,6 +45,9 @@ filtered_table <- function(d, filter_cols, id, signif_cols = NULL, round_cols = 
   if (!is.null(round_cols)) dt <- DT::formatRound(dt, round_cols, 3)
   htmltools::tagList(bar, dt)
 }
+# plotly keeps a copy of every trace's arguments ('attrs') next to the data it draws; the page only needs
+# the data, so a built chart is slimmed before it is written out (about half the size of a large chart)
+slim <- function(p) { p <- plotly::plotly_build(p); p$x$attrs <- NULL; p }
 f2 <- function(x) sprintf("%.2f", x); f3 <- function(x) sprintf("%.3f", x); pct <- function(x) sprintf("%.0f%%", 100 * x)
 menu <- function(buttons, x = 0, y = 1.03, type = "buttons", active = 0)
   list(type = type, direction = "right", x = x, y = y, xanchor = "left", yanchor = "bottom", showactive = TRUE, active = active,
@@ -62,7 +65,7 @@ cell_paths <- function(grid) {
 }
 # the prototypes as small curves in their cells, one channel at a time; at most n_show points per curve
 # and three decimals, to keep the page small
-proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62, n_show = 32) {
+proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62, n_show = 24) {
   keep <- unique(round(seq(1, L, length.out = min(L, n_show))))
   tt <- seq(-width / 2, width / 2, length.out = L)[keep]
   Y <- M[, (channel - 1) * L + keep, drop = FALSE]

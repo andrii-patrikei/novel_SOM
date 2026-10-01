@@ -49,12 +49,14 @@ precision_ladder <- function(ds, size, seed, rlen, modes = c("euclid", "dtw"), m
                              with_mpfr = TRUE, with_rmpfr = FALSE, fp32_data = TRUE) {
   grid <- make_grid(size, size)
   N <- nrow(ds$X); K <- grid$K; S <- rlen * N
-  set.seed(seed); M0 <- ds$X[sample(N, K), , drop = FALSE]; pick <- as.integer(floor(N * runif(S)) + 1)
+  set.seed(seed); start <- sample(N, K); pick <- as.integer(floor(N * runif(S)) + 1)
+  M0 <- ds$X[start, , drop = FALSE]
+  X32 <- round_fp32(ds$X); M0_32 <- X32[start, , drop = FALSE]       # the fp32 data: items and start alike
   sch <- schedule(S, grid); sc <- scales_of(ds)
   snap_at <- unique(round(S * (seq_len(n_snaps) / n_snaps)^1.5)); snap_at <- snap_at[snap_at >= 1]
   rows <- list(); curves <- list(); gaps <- list()
-  cpp <- function(X, prec, mode, kahan = FALSE)
-    som_train_cpp(X, M0, grid$dist, pick, sch$alpha, sch$radius, rep(0, S), NS_MODES[[mode]], ds$L, ds$nch, sc$band, 2, 1, sc$maxshift,
+  cpp <- function(X, prec, mode, kahan = FALSE, M_start = M0)
+    som_train_cpp(X, M_start, grid$dist, pick, sch$alpha, sch$radius, rep(0, S), NS_MODES[[mode]], ds$L, ds$nch, sc$band, 2, 1, sc$maxshift,
                   0, 0, 0, prec, kahan, as.integer(snap_at))
   timed <- function(f) { t0 <- proc.time()[["elapsed"]]; r <- f(); r$seconds <- proc.time()[["elapsed"]] - t0; r }
   mp_name <- sprintf("MPFR %d-bit", mpfr_bits)
@@ -62,7 +64,7 @@ precision_ladder <- function(ds, size, seed, rlen, modes = c("euclid", "dtw"), m
     r <- list(fp32 = timed(function() cpp(ds$X, 0L, mode)), fp64 = timed(function() cpp(ds$X, 1L, mode)),
               `fp64 + Kahan` = timed(function() cpp(ds$X, 1L, mode, TRUE)), fp80 = timed(function() cpp(ds$X, 2L, mode)),
               fp128 = timed(function() cpp(ds$X, 3L, mode)))
-    if (fp32_data) r[["fp32 data, fp64 arithmetic"]] <- timed(function() cpp(round_fp32(ds$X), 1L, mode))
+    if (fp32_data) r[["fp32 data, fp64 arithmetic"]] <- timed(function() cpp(X32, 1L, mode, M_start = M0_32))
     if (with_mpfr)
       r[[mp_name]] <- timed(function() som_train_mpfr_cpp(ds$X, M0, grid$dist, pick, sch$alpha, sch$radius, NS_MODES[[mode]], ds$L, ds$nch, sc$band,
                                                           as.integer(mpfr_bits), as.integer(snap_at)))
@@ -85,4 +87,19 @@ precision_ladder <- function(ds, size, seed, rlen, modes = c("euclid", "dtw"), m
   }
   list(table = do.call(rbind, rows), curves = do.call(rbind, curves), S = S, K = K, gaps = gaps,
        gap = gaps[[modes[1]]], gap_dtw = if ("dtw" %in% modes) gaps[["dtw"]] else NULL)
+}
+
+# the ladder of the report, computed once and cached (the same key as the report's); 'settings' names the
+# size and the passes of each of the two runs
+compute_ladder <- function(datasets, mpfr_bits = 256, settings = list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4)),
+                           dir = "next_steps/cache") {
+  small_cbf <- make_cbf(30, 40, 0.5, seed = 1)
+  small_cbf$title <- "small CBF (90 series of 40 points, as the tutorial)"
+  key <- bench_key(mpfr_bits, settings, lapply(datasets$pd, function(x) x),
+                   files = c(NS_CODE_FILES[c(1, 3, 4)], "next_steps/ns_mpfr.cpp", "next_steps/R/ns_precision.R"))
+  ladder <- cached("precision", key, dir = dir, fn = function() list(
+    cbf = precision_ladder(small_cbf, settings$cbf$size, 1, rlen = settings$cbf$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits, with_rmpfr = TRUE),
+    pd  = precision_ladder(datasets$pd, settings$pd$size, 1, rlen = settings$pd$rlen, modes = c("euclid", "dtw"), mpfr_bits = mpfr_bits)))
+  ladder$small_cbf <- small_cbf
+  ladder
 }

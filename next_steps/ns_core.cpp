@@ -2,7 +2,8 @@
 //
 // One online SOM, written once as a template over the scalar type, so that the same loop can run in
 // fp32 (float), fp64 (double), 80-bit extended (long double) and 128-bit quad (__float128); the
-// 256-bit reference runs in R with Rmpfr (next_steps/R/ns_precision.R) and repeats these operations.
+// arbitrary-precision reference (next_steps/ns_mpfr.cpp, the MPFR library) repeats these operations,
+// and an Rmpfr loop in R (next_steps/R/ns_precision.R) checks that reference.
 //
 // Every row of X is one item: a series of L points in nch channels, stored channel by channel
 // (value at time i of channel c is x[c * L + i]); a feature vector is a series with nch = 1.
@@ -24,9 +25,11 @@
 //                 softmax of -(sum_j h_kj d_j^2) / temp over the units, and unit j moves with weight
 //                 sum_k P(k) h_kj instead of h_{win, j}
 //   conscience    frequency-sensitive winner (Ahalt et al. 1990 / DeSieno 1988): the winner minimises
-//                 d_k (1 + beta (K p_k - 1)), with p_k the running share of wins of unit k
+//                 d_k (1 + beta (K p_k - 1)), with p_k the running share of wins of unit k; beta in [0, 1)
+//                 keeps the factor positive
 //   huber > 0     every component of the pull x - m is clipped to [-huber, huber] (a robust, L1-like step)
-//   momentum > 0  heavy-ball update: v = mu v + a h (x - m); m += v
+//   momentum > 0  heavy-ball update: v = mu v + a h (x - m); m += v; a unit the item does not pull keeps
+//                 v = mu v, so every velocity decays every step
 //   kahan         Neumaier-compensated sums in the pointwise distances (fp64 and below)
 //
 // [[Rcpp::plugins(cpp17)]]
@@ -280,7 +283,7 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
   std::vector<T> d(K), h((size_t) K * K), w(K), P(K), e(K), xw(D), scratch, pfreq(K, T(1) / T(K));
   std::vector<int> lag(K, 0), win(S), nearest(S), counts(K, 0);
   std::vector<int> snaps(snap_at.begin(), snap_at.end());
-  std::vector<double> gap(S);                                    // (d_2nd - d_1st) / d_1st: how close the contest was
+  std::vector<double> gap(S);                                    // (d_2nd - d_1st) / d_1st: how close the contest was (absolute when d_1st = 0)
   List snapshots;
   long comparisons = 0;
   T last_r = -1;
@@ -321,10 +324,12 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
       for (int k = 0; k < K; k++) pfreq[k] += T(0.0001) * ((k == winner ? T(1) : T(0)) - pfreq[k]);
     }
     if (tmp > 0) {                                               // deterministic annealing: a softmax over the units
+      // the energy of assigning the item to unit k: the neighbourhood-weighted squared distances (the
+      // soft-DTW value is already a squared cost, and can be negative, so it enters as it is)
       T emin = big<T>();
       for (int k = 0; k < K; k++) {
         T ek = 0;
-        for (int j = 0; j < K; j++) ek += h[(size_t) k * K + j] * d[j] * d[j];
+        for (int j = 0; j < K; j++) { T dj = d[j]; ek += h[(size_t) k * K + j] * (o.mode == SOFTDTW ? dj : dj * dj); }
         e[k] = ek;
         if (ek < emin) emin = ek;
       }
@@ -341,7 +346,10 @@ List train_T(const NumericMatrix& X, const NumericMatrix& M0, const NumericMatri
     counts[winner]++;
     // 3. the update of every unit the item pulls
     for (int j = 0; j < K; j++) {
-      if (w[j] <= T(1e-10)) continue;
+      if (w[j] <= T(1e-10)) {                                      // not pulled: the velocity still decays
+        if (mu > 0) for (int k = 0; k < D; k++) V[(size_t) j * D + k] *= mu;
+        continue;
+      }
       T* m = &M[(size_t) j * D];
       item_for(x, m, o, scratch, lag[j], xw.data());
       T step = a * w[j];
@@ -376,6 +384,10 @@ List som_train_cpp(NumericMatrix X, NumericMatrix M0, NumericMatrix grid_dist, I
   if (X.ncol() != L * nch) stop("X has %d columns but L * nch = %d", X.ncol(), L * nch);
   if (pick.size() != alpha.size() || pick.size() != radius.size() || pick.size() != temp.size())
     stop("pick, alpha, radius and temp must have one value per step");
+  if (conscience < 0 || conscience >= 1) stop("conscience must be in [0, 1)");
+  if (momentum < 0 || momentum >= 1) stop("momentum must be in [0, 1)");
+  for (int s = 0; s < radius.size(); s++) if (!(radius[s] > 0)) stop("every radius must be positive (the schedule uses 0.5 below 1)");
+  for (int s = 0; s < pick.size(); s++) if (pick[s] < 1 || pick[s] > X.nrow()) stop("pick holds a row number outside X");
   Opts o = make_opts(mode, L, nch, band, p, gamma, maxshift, kahan);
   switch (prec) {
     case P_FLOAT:      return train_T<float>(X, M0, grid_dist, pick, alpha, radius, temp, o, conscience, huber, momentum, snap_at);

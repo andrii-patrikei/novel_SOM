@@ -72,6 +72,9 @@ List som_train_mpfr_cpp(NumericMatrix X, NumericMatrix M0, NumericMatrix grid_di
   const int N = X.nrow(), D = X.ncol(), K = M0.nrow(), S = pick.size();
   if (D != L * nch || M0.ncol() != D) stop("X and M0 must have L * nch columns");
   if (mode != 0 && mode != 6) stop("mode must be 0 (Euclidean) or 6 (DTW)");
+  if (bits < MPFR_PREC_MIN || bits > 16384) stop("bits must be between %d and 16384", (int) MPFR_PREC_MIN);
+  if (alpha.size() != S || radius.size() != S) stop("pick, alpha and radius must have one value per step");
+  for (int s = 0; s < S; s++) { if (!(radius[s] > 0)) stop("every radius must be positive"); if (pick[s] < 1 || pick[s] > N) stop("pick holds a row number outside X"); }
   if (band < 0) band = L;
   const mpfr_prec_t P = bits;
   MpVec V((size_t) (N + K) * D, P);                   // the items, then the prototypes
