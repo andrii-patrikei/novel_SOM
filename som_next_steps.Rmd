@@ -81,6 +81,7 @@ for (f in c("ns_data.R", "ns_maps.R", "ns_quality.R", "ns_bench.R", "ns_precisio
 # soft-DTW); next_steps/run_benchmark.R computes the same cache outside the knit, on all cores.
 QUICK <- isTRUE(p$quick)
 SIZES <- if (QUICK) c(5, 7) else c(5, 7, 10, 14)
+REF <- if (10 %in% SIZES) 10 else max(SIZES)                   # the size the text quotes
 CACHE_DIR <- if (QUICK) "next_steps/cache_quick" else "next_steps/cache"
 seeds <- seq_len(p$seeds)
 datasets <- load_datasets()
@@ -152,15 +153,15 @@ nn_floor <- sapply(datasets, function(d) sapply(c("euclid", "dtw"), function(jud
 ```
 
 ```{r headline-numbers, include = FALSE}
-# the numbers of the box below, all from the results of this knit (10 x 10 maps unless said otherwise)
-pd_best_ari <- best_variant("pd", 10, "ari_own")
-pd_eu_ari   <- mean_of("pd", "euclid", 10, "ari_own"); pd_dtw_ari <- mean_of("pd", "dtw", 10, "ari_own")
-ge_best_ari <- best_variant("gestures", 10, "ari_own"); ge_eu_ari <- mean_of("gestures", "euclid", 10, "ari_own")
+# the numbers of the box below, all from the results of this knit (REF x REF maps unless said otherwise)
+pd_best_ari <- best_variant("pd", REF, "ari_own")
+pd_eu_ari   <- mean_of("pd", "euclid", REF, "ari_own"); pd_dtw_ari <- mean_of("pd", "dtw", REF, "ari_own")
+ge_best_ari <- best_variant("gestures", REF, "ari_own"); ge_eu_ari <- mean_of("gestures", "euclid", REF, "ari_own")
 det_best <- names(which.max(sapply(names(VARIANTS), det_mean)))
-soft_vs_dtw <- sapply(names(datasets), function(k) wins_of(k, "softdtw", 10, "qe_dtw"))
-anneal_te  <- sapply(names(datasets), function(k) wins_of(k, "anneal", 10, "te_own"))
-anneal_qe  <- sapply(names(datasets), function(k) wins_of(k, "anneal", 10, "qe_eu"))
-l1h_wins   <- sapply(names(datasets), function(k) wins_of(k, "l1_huber", 10, "ari_own"))
+soft_vs_dtw <- sapply(names(datasets), function(k) wins_of(k, "softdtw", REF, "qe_dtw"))
+anneal_te  <- sapply(names(datasets), function(k) wins_of(k, "anneal", REF, "te_own"))
+anneal_qe  <- sapply(names(datasets), function(k) wins_of(k, "anneal", REF, "qe_eu"))
+l1h_wins   <- sapply(names(datasets), function(k) wins_of(k, "l1_huber", REF, "ari_own"))
 size_flip  <- sapply(names(datasets), function(k) sapply(SIZES, function(s) best_variant(k, s, "ari_own")$id))
 lad_tab <- rbind(cbind(data = "cbf", ladder$cbf$table), cbind(data = "pd", ladder$pd$table))
 fp32_first <- lad_tab[lad_tab$precision == "fp32" & lad_tab$mode == "euclid", c("data", "first_flip", "flips")]
@@ -196,7 +197,7 @@ series. It has three parts:
    128-bit and `r p$mpfr_bits`-bit MPFR arithmetic, step by step.
 
 <div class="box">
-**The answer in short** (`r p$seeds` seeds, `r p$rlen` passes, 10 &times; 10 maps unless said otherwise; the synthetic stand-ins of Section 2)
+**The answer in short** (`r p$seeds` seeds, `r p$rlen` passes, `r REF` &times; `r REF` maps unless said otherwise; the synthetic stand-ins of Section 2)
 
 * **The distance is the lever, and it must sit in the update.** On the
   partial-discharge stand-in the classes were found best by the
@@ -361,25 +362,26 @@ project, is the mechanism real or a knob without a reason, are the
 references right, is the control fair, does it plausibly matter for pulses
 or for gestures. What survived is below; what was dropped is listed at the
 end of the section with the reason. Tier A: build first; B: after A pays
-off; C: a long shot worth one small experiment.
+off; C: a long shot worth one small experiment. Filter with the menus above
+the table; the folded cells open on a click.
 
 ```{r ideas-table}
 if (is.null(ideas)) {
   cat("The catalogue (next_steps/ideas/ideas.json) is not in this checkout.")
 } else {
   fold <- function(s, n = 90) ifelse(nchar(s) > n, sprintf("<details><summary>%s&hellip;</summary>%s</details>", substr(s, 1, n), s), s)
-  chip <- function(t) sprintf("<span class='chip %s'>%s</span>", t, t)
   it <- do.call(rbind, lapply(ideas$ideas, function(i) data.frame(
-    Tier = chip(i$tier), Idea = sprintf("<b>%s</b><br><span class='note'>%s</span>", i$title, i$lens),
+    Tier = i$tier, Lens = i$lens, Idea = sprintf("<b>%s</b>", i$title),
     `What it changes` = fold(paste(i$what_it_changes, i$mechanism)), `For partial discharges` = fold(i$why_pd),
     `For movement` = fold(i$why_movement), `The control to beat` = fold(i$control), `How to test` = fold(i$how_to_test),
     Cost = fold(i$cost, 60), `Expected gain` = i$expected_gain, Confidence = sprintf("%.2f", i$confidence),
     `Skeptic` = fold(paste(if (nzchar(i$problems)) i$problems else "no objection", if (nzchar(i$corrections)) paste("Correction:", i$corrections) else ""), 70),
     References = fold(paste(unlist(i$anchors), collapse = "; "), 60), stringsAsFactors = FALSE, check.names = FALSE)))
-  it <- it[order(match(sub(".*'>(.)<.*", "\\1", it$Tier), c("A", "B", "C")), -as.numeric(it$Confidence)), ]
-  datatable(it, rownames = FALSE, filter = "top", class = "compact hover", escape = FALSE,
-            options = list(dom = "fti", paging = FALSE, ordering = TRUE, autoWidth = TRUE, scrollX = TRUE,
-                           columnDefs = list(list(width = "14%", targets = 1), list(width = "18%", targets = 2))))
+  it <- it[order(match(it$Tier, c("A", "B", "C")), -as.numeric(it$Confidence)), ]
+  chip_js <- JS("function(data, type) { if (type !== 'display') return data; return '<span class=\"chip ' + data + '\">' + data + '</span>'; }")
+  filtered_table(it, c("Tier", "Lens"), id = "ideas-table", escape = FALSE, dom = "ti", page_length = 100,
+                 column_defs = list(list(render = chip_js, targets = 0), list(width = "12%", targets = 2), list(width = "16%", targets = 3)),
+                 ordering = TRUE, paging = FALSE)
 }
 ```
 
@@ -639,7 +641,7 @@ The code, in full:
 # 5. The maps, at four sizes
 
 One figure per data set, seed 1: pick a variant in the menu and see its map
-at 5 &times; 5, 7 &times; 7, 10 &times; 10 and 14 &times; 14 units side by
+at `r paste(sprintf('%d &times; %d', SIZES, SIZES), collapse = ', ')` units side by
 side. Each cell is tinted with the class of most of the items it wins (white:
 none), and carries its prototype as a small curve (the first axis for the
 gestures). Hover a cell for the items it won by class. The sizes share the
@@ -782,15 +784,16 @@ rectangular sheet and all other Euclidean variants with the online SOM, the
 DTW variants with the DTW-SOM. An empty cell was not run (soft-DTW at
 14 &times; 14).</p>
 
-## 6c. Seed by seed, at 10 &times; 10
+## 6c. Seed by seed, at `r REF` &times; `r REF`
 
 Each dot is one seed: how much better the variant did than its control with
 the same start and the same order of items. Right of the line: the variant
 was better. Pick the measure and the data set.
 
 ```{r strip}
-strip_chart <- function(size = 10) {
+strip_chart <- function(size = REF) {
   vids <- setdiff(names(VARIANTS), c("euclid", "dtw")); keys <- names(datasets); nr <- length(vids); ypos <- nr - seq_along(vids)
+  vlab <- sapply(vids, v_lab)
   build <- function(k, id) {
     D <- do.call(rbind, lapply(seq_along(vids), function(r) { a <- tryCatch(adv_of(k, vids[r], size, id), error = function(e) NULL); if (is.null(a) || !nrow(a)) NULL else cbind(row = r, a) }))
     if (is.null(D)) return(NULL)
@@ -800,8 +803,8 @@ strip_chart <- function(size = 10) {
     M <- aggregate(x ~ row, D, function(v) if (ratio) exp(mean(log(v))) else mean(v))
     set.seed(3)
     list(x = I(D$x), y = I(ypos[D$row] + runif(nrow(D), -0.22, 0.22)), col = I(ifelse(D$adv > 0, "#eb6834", ifelse(D$adv < 0, "#2a78d6", AXIS))),
-         text = I(sprintf("<b>%s</b>, seed %d<br>variant %s, control %s", VARIANTS[[vids[D$row]]]$label, D$seed, formatC(D$v, digits = 3, format = "fg", flag = "#"), formatC(D$c, digits = 3, format = "fg", flag = "#"))),
-         mx = I(M$x), my = I(ypos[M$row]), mtext = I(sprintf("<b>%s</b>: %s %.3g", VARIANTS[[vids[M$row]]]$label, if (ratio) "geometric mean" else "mean", M$x)),
+         text = I(sprintf("<b>%s</b>, seed %d<br>variant %s, control %s", vlab[D$row], D$seed, formatC(D$v, digits = 3, format = "fg", flag = "#"), formatC(D$c, digits = 3, format = "fg", flag = "#"))),
+         mx = I(M$x), my = I(ypos[M$row]), mtext = I(sprintf("<b>%s</b>: %s %.3g", vlab[M$row], if (ratio) "geometric mean" else "mean", M$x)),
          type = if (ratio) "log" else "linear", ref = if (ratio) 1 else 0,
          axis = if (ratio) paste(vw$label, ": control / variant (log scale; right of 1 = variant better)") else paste(vw$label, ": variant minus control (right of 0 = variant better)"))
   }
@@ -824,20 +827,20 @@ strip_chart <- function(size = 10) {
                                                                    list(xaxis.title.text = b1$axis, xaxis.type = b1$type, xaxis.autorange = TRUE, shapes = ref_line(b1$ref))))
   })
   data_buttons <- lapply(keys, function(k) list(method = "restyle", label = SHORT[[k]], args = list(list(visible = rep(keys == k, each = 2)))))
-  chart(pl, xaxis = ax(B[[keys[1]]][[1]]$axis), yaxis = ax(NULL, tickvals = ypos, ticktext = sapply(vids, function(v) VARIANTS[[v]]$label), range = c(-0.6, nr - 0.4), ticksuffix = "  ", zeroline = FALSE),
+  chart(pl, xaxis = ax(B[[keys[1]]][[1]]$axis), yaxis = ax(NULL, tickvals = ypos, ticktext = unname(vlab), range = c(-0.6, nr - 0.4), ticksuffix = "  ", zeroline = FALSE),
         shapes = ref_line(B[[keys[1]]][[1]]$ref), showlegend = FALSE,
         annotations = list(list(xref = "paper", yref = "paper", x = 0, y = 1.01, xanchor = "left", yanchor = "bottom", showarrow = FALSE, text = "<span style='color:#2a78d6'>&#9679;</span> control better", font = list(size = 13, color = INK)),
                            list(xref = "paper", yref = "paper", x = 1, y = 1.01, xanchor = "right", yanchor = "bottom", showarrow = FALSE, text = "variant better <span style='color:#eb6834'>&#9679;</span>", font = list(size = 13, color = INK))),
         updatemenus = list(menu(measure_buttons, type = "dropdown", x = 0, y = 1.06), menu(data_buttons, x = 0.6, y = 1.06)), margin = list(t = 80, b = 60, l = 200))
 }
-strip_chart(10)
+strip_chart(REF)
 ```
 
 ## 6d. All numbers
 
 Means over the seeds, every variant, every data set, every size, every judge.
-Filter the columns (the boxes above them) to one size and one judge before
-comparing QE or KL.
+Filter with the menus above the table to one size and one judge before
+comparing QE or KL; click a heading to sort.
 
 ```{r all-numbers}
 agg <- aggregate(cbind(QE, EV, TE, KL, TP, used, purity, ARI, NMI, trust, cont, seconds, comparisons, not_nearest, gap_median, gap_tiny) ~ dataset + variant + size + judge,
@@ -847,29 +850,31 @@ agg$Map <- factor(sprintf("%d x %d", agg$size, agg$size), levels = sprintf("%d x
 out <- agg[order(agg$`Data set`, agg$Map, agg$Variant, agg$Judge), c("Data set", "Map", "Variant", "Judge", "QE", "EV", "TE", "KL", "TP", "used", "purity", "ARI", "NMI", "trust", "cont", "seconds", "not_nearest", "gap_tiny")]
 names(out)[names(out) == "used"] <- "Units used"; names(out)[names(out) == "purity"] <- "Purity"; names(out)[names(out) == "trust"] <- "Trust"; names(out)[names(out) == "cont"] <- "Continuity"
 names(out)[names(out) == "seconds"] <- "Seconds"; names(out)[names(out) == "not_nearest"] <- "Winner not nearest"; names(out)[names(out) == "gap_tiny"] <- "Contests closer than 1e-6"
-datatable(out, rownames = FALSE, filter = "top", class = "compact hover stripe", options = list(dom = "tip", pageLength = 17, autoWidth = FALSE, scrollX = TRUE)) |>
-  formatSignif(c("QE", "KL", "TP", "Seconds"), 3) |> formatRound(c("EV", "TE", "Units used", "Purity", "ARI", "NMI", "Trust", "Continuity", "Winner not nearest", "Contests closer than 1e-6"), 3)
+out$`Data set` <- as.character(out$`Data set`); out$Map <- as.character(out$Map); out$Variant <- as.character(out$Variant); out$Judge <- as.character(out$Judge)
+filtered_table(out, c("Data set", "Map", "Variant", "Judge"), id = "all-numbers", page_length = 17,
+               signif_cols = c("QE", "KL", "TP", "Seconds"),
+               round_cols = c("EV", "TE", "Units used", "Purity", "ARI", "NMI", "Trust", "Continuity", "Winner not nearest", "Contests closer than 1e-6"))
 ```
 
 ```{r results-text, include = FALSE}
 # the sentences of the box below, from the results
-best_by <- function(k, view, size = 10) { b <- best_variant(k, size, view); sprintf("%s (%s)", b$label, formatC(b$value, digits = 2, format = "f")) }
-ctrl_of <- function(k, view, size = 10) formatC(mean_of(k, "euclid", size, view), digits = 2, format = "f")
-cos_pd <- wins_of("pd", "cosine", 10, "ari_own"); sbd_pd <- wins_of("pd", "sbd", 10, "ari_own"); dtw_pd_wins <- wins_of("pd", "dtw", 10, "ari_own")
-sbd_ge <- wins_of("gestures", "sbd", 10, "ari_own"); dtw_ge <- wins_of("gestures", "dtw", 10, "ari_own")
-l1_qe <- sapply(names(datasets), function(k) wins_of(k, "manhattan", 10, "qe_eu")); l1_ari <- sapply(names(datasets), function(k) wins_of(k, "manhattan", 10, "ari_own"))
-hub_qe <- sapply(names(datasets), function(k) wins_of(k, "huber", 10, "qe_eu")); con_used <- sapply(names(datasets), function(k) wins_of(k, "conscience", 10, "used_own"))
-tor_te <- sapply(names(datasets), function(k) wins_of(k, "torus", 10, "te_own")); rect_te <- sapply(names(datasets), function(k) wins_of(k, "rect", 10, "te_own"))
-mom_qe <- sapply(names(datasets), function(k) wins_of(k, "momentum", 10, "qe_eu")); mom_te <- sapply(names(datasets), function(k) wins_of(k, "momentum", 10, "te_own"))
-soft_te <- sapply(names(datasets), function(k) wins_of(k, "softdtw", 10, "te_dtw")); soft_ari <- sapply(names(datasets), function(k) wins_of(k, "softdtw", 10, "ari_dtw"))
-dan_te <- sapply(names(datasets), function(k) wins_of(k, "dtw_anneal", 10, "te_own")); dan_qe <- sapply(names(datasets), function(k) wins_of(k, "dtw_anneal", 10, "qe_dtw"))
-fmt_w <- function(w) paste(sprintf("%d of %d", w["better", ], w["n", ]), collapse = ", ")
-secs_ratio <- function(v, k = "pd", size = 10) mean_of(k, v, size, "secs") / mean_of(k, "euclid", size, "secs")
+best_by <- function(k, view, size = REF) { b <- best_variant(k, size, view); sprintf("%s (%s)", b$label, formatC(b$value, digits = 2, format = "f")) }
+ctrl_of <- function(k, view, size = REF) formatC(mean_of(k, "euclid", size, view), digits = 2, format = "f")
+cos_pd <- wins_of("pd", "cosine", REF, "ari_own"); sbd_pd <- wins_of("pd", "sbd", REF, "ari_own"); dtw_pd_wins <- wins_of("pd", "dtw", REF, "ari_own")
+sbd_ge <- wins_of("gestures", "sbd", REF, "ari_own"); dtw_ge <- wins_of("gestures", "dtw", REF, "ari_own")
+l1_qe <- sapply(names(datasets), function(k) wins_of(k, "manhattan", REF, "qe_eu")); l1_ari <- sapply(names(datasets), function(k) wins_of(k, "manhattan", REF, "ari_own"))
+hub_qe <- sapply(names(datasets), function(k) wins_of(k, "huber", REF, "qe_eu")); con_used <- sapply(names(datasets), function(k) wins_of(k, "conscience", REF, "used_own"))
+tor_te <- sapply(names(datasets), function(k) wins_of(k, "torus", REF, "te_own")); rect_te <- sapply(names(datasets), function(k) wins_of(k, "rect", REF, "te_own"))
+mom_qe <- sapply(names(datasets), function(k) wins_of(k, "momentum", REF, "qe_eu")); mom_te <- sapply(names(datasets), function(k) wins_of(k, "momentum", REF, "te_own"))
+soft_te <- sapply(names(datasets), function(k) wins_of(k, "softdtw", REF, "te_dtw")); soft_ari <- sapply(names(datasets), function(k) wins_of(k, "softdtw", REF, "ari_dtw"))
+dan_te <- sapply(names(datasets), function(k) wins_of(k, "dtw_anneal", REF, "te_own")); dan_qe <- sapply(names(datasets), function(k) wins_of(k, "dtw_anneal", REF, "qe_dtw"))
+fmt_w <- function(w) if (is.null(dim(w))) sprintf("%d of %d", w[["better"]], w[["n"]]) else paste(sprintf("%d of %d", w["better", ], w["n", ]), collapse = ", ")
+secs_ratio <- function(v, k = "pd", size = REF) mean_of(k, v, size, "secs") / mean_of(k, "euclid", size, "secs")
 ```
 
 <div class="box">
 
-* **Distances.** At 10 &times; 10 the classes of the partial-discharge
+* **Distances.** At `r REF` &times; `r REF` the classes of the partial-discharge
   stand-in were found best by `r best_by("pd", "ari_own")`, of the gestures by
   `r best_by("gestures", "ari_own")`, of CBF by `r best_by("cbf", "ari_own")`
   (ARI with each map's own distance; online SOM `r ctrl_of("pd", "ari_own")`,
@@ -891,7 +896,7 @@ secs_ratio <- function(v, k = "pd", size = 10) mean_of(k, v, size, "secs") / mea
   winner on the Euclidean map: order better on `r fmt_w(anneal_te)` seeds,
   fit on `r fmt_w(anneal_qe)`; on the DTW-SOM: order `r fmt_w(dan_te)`, fit
   `r fmt_w(dan_qe)`. The annealed contest chose a unit other than the nearest
-  in `r pct(mean_of("pd", "anneal", 10, "used_own") * 0 + mean(bench$not_nearest[bench$variant == "anneal" & bench$judge == "own"]))`
+  in `r pct(mean(bench$not_nearest[bench$variant == "anneal" & bench$judge == "own"]))`
   of the steps: it is a different map, not the online SOM with noise.
 * **Lattices.** The torus against the rectangular sheet: TE better on
   `r fmt_w(tor_te)` seeds; the rectangular sheet against the hexagonal one:

@@ -22,6 +22,29 @@ tab <- function(d, search = nrow(d) > 12, digits = NULL, page = FALSE, ...) {
   if (!is.null(digits)) for (cn in names(digits)) dt <- DT::formatRound(dt, cn, digits[[cn]])
   dt
 }
+# a table with a row of dropdown filters above it, one per chosen column, wired to the DataTables API
+# (no selectize or slider library needed, so it renders the same everywhere); the filter columns must
+# hold plain text
+filtered_table <- function(d, filter_cols, id, signif_cols = NULL, round_cols = NULL, page_length = 15, dom = "tip",
+                           escape = TRUE, column_defs = NULL, ...) {
+  sel <- lapply(filter_cols, function(cn) {
+    vals <- unique(as.character(d[[cn]])); if (is.factor(d[[cn]])) vals <- levels(droplevels(d[[cn]])) else vals <- sort(vals)
+    htmltools::tags$label(style = "margin: 0 16px 6px 0; font-size: 13px; color: #52514e; display: inline-block;", paste0(cn, ": "),
+      htmltools::tags$select(`data-col` = match(cn, names(d)) - 1, style = "font-size: 13px; padding: 2px 4px; max-width: 260px;",
+                             htmltools::tags$option(value = "", "all"), lapply(vals, function(v) htmltools::tags$option(value = v, v))))
+  })
+  bar <- htmltools::tags$div(id = paste0(id, "-filters"), style = "margin: 6px 0 4px;", sel)
+  cb <- DT::JS(sprintf(paste0(
+    "$('#%s-filters select').on('change', function() {",
+    "  var v = $(this).val(); var col = $(this).data('col');",
+    "  table.column(col).search(v ? '^' + $.fn.dataTable.util.escapeRegex(v) + '$' : '', true, false).draw();",
+    "}); return table;"), id))
+  dt <- DT::datatable(d, rownames = FALSE, elementId = id, class = "compact hover stripe", escape = escape, callback = cb,
+                      options = c(list(dom = dom, pageLength = page_length, autoWidth = FALSE, scrollX = TRUE, columnDefs = column_defs), list(...)))
+  if (!is.null(signif_cols)) dt <- DT::formatSignif(dt, signif_cols, 3)
+  if (!is.null(round_cols)) dt <- DT::formatRound(dt, round_cols, 3)
+  htmltools::tagList(bar, dt)
+}
 f2 <- function(x) sprintf("%.2f", x); f3 <- function(x) sprintf("%.3f", x); pct <- function(x) sprintf("%.0f%%", 100 * x)
 menu <- function(buttons, x = 0, y = 1.03, type = "buttons", active = 0)
   list(type = type, direction = "right", x = x, y = y, xanchor = "left", yanchor = "bottom", showactive = TRUE, active = active,
@@ -37,16 +60,18 @@ cell_paths <- function(grid) {
   for (k in seq_len(nrow(pos))) { x <- c(x, pos[k, 1] + shape[, 1], NA); y <- c(y, pos[k, 2] + shape[, 2], NA) }
   data.frame(x = x, y = y)
 }
-# the prototypes as small curves in their cells, one channel at a time
-proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62) {
-  tt <- seq(-width / 2, width / 2, length.out = L)
-  Y <- M[, (channel - 1) * L + seq_len(L), drop = FALSE]
+# the prototypes as small curves in their cells, one channel at a time; at most n_show points per curve
+# and three decimals, to keep the page small
+proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62, n_show = 40) {
+  keep <- unique(round(seq(1, L, length.out = min(L, n_show))))
+  tt <- seq(-width / 2, width / 2, length.out = L)[keep]
+  Y <- M[, (channel - 1) * L + keep, drop = FALSE]
   x <- y <- c()
   for (k in seq_len(nrow(M))) {
     x <- c(x, grid$pos[k, 1] + tt, NA)
     y <- c(y, grid$pos[k, 2] + ((Y[k, ] - y_range[1]) / diff(y_range) - 0.5) * height, NA)
   }
-  data.frame(x = x, y = y)
+  data.frame(x = round(x, 3), y = round(y, 3))
 }
 # colour of every cell: the class of most of the items it wins, white when it wins none
 cell_fill <- function(bmu, cls, K, class_col, alpha = 0.55) {
