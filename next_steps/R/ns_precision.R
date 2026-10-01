@@ -94,6 +94,8 @@ precision_ladder <- function(ds, size, seed, rlen, modes = c("euclid", "dtw"), m
 compute_ladder <- function(datasets, mpfr_bits = 256,
                            settings = list(cbf = list(size = 7, rlen = 20), pd = list(size = 7, rlen = 4), pd_raw = list(size = 7, rlen = 4)),
                            dir = "next_steps/cache") {
+  mpfr_bits <- as.integer(mpfr_bits)                              # one key whether the caller passed 256 or 256L
+  settings <- lapply(settings, function(x) list(size = as.integer(x$size), rlen = as.integer(x$rlen)))
   small_cbf <- make_cbf(30, 40, 0.5, seed = 1)
   small_cbf$title <- "small CBF (90 series of 40 points, as the tutorial)"
   pd_raw <- datasets$pd                                             # the same pulses as raw pressure in mPa: four decades, no asinh
