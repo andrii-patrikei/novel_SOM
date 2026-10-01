@@ -1,0 +1,7 @@
+next_steps/.cpp_cache/
+next_steps/cache_quick/
+*_files/
+*_cache/
+.Rhistory
+.RData
+.Rproj.user
