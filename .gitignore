@@ -5,3 +5,5 @@ next_steps/cache_quick/
 .Rhistory
 .RData
 .Rproj.user
+*.knit.md
+*.utf8.md
