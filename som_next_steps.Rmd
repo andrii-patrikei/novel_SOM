@@ -652,7 +652,7 @@ items.
 
 ```{r gallery, results = "asis"}
 gallery_plot <- function(k) {
-  d <- datasets[[k]]; col <- class_colours(d$cls); W <- 1180; H <- 360; ns <- length(SIZES)
+  d <- datasets[[k]]; col <- class_colours(d$cls); W <- 940; H <- 270; ns <- length(SIZES)
   vids <- names(VARIANTS); pl <- plot_ly(width = W, height = H); vis_group <- c()
   lay <- list(margin = list(t = 36, b = 10, l = 10, r = 10), showlegend = FALSE)
   for (si in seq_along(SIZES)) {
@@ -668,14 +668,18 @@ gallery_plot <- function(k) {
     counts <- table(factor(f$bmu, levels = seq_len(grid$K)), d$cls)
     hover <- sapply(seq_len(grid$K), function(u) sprintf("<b>%s, %d x %d</b><br>unit %d: %d items<br>%s", VARIANTS[[v]]$label, s, s, u, sum(counts[u, ]),
                                                           paste(sprintf("%s %d", colnames(counts), counts[u, ]), collapse = ", ")))
-    px <- (W / ns - 20) / (s + 1.1)
+    pitch <- (W / ns - 20) / (s + 1.1)                                   # pixels per lattice unit in this panel
+    cp <- cell_paths(grid)
+    pl <- add_trace(pl, x = round(cp$x, 3), y = round(cp$y, 3), type = "scatter", mode = "lines", xaxis = paste0("x", si), yaxis = paste0("y", si),
+                    line = list(color = "#c3c2b7", width = 0.6), hoverinfo = "skip", visible = v == vids[1])
     pl <- add_trace(pl, x = grid$pos[, 1], y = grid$pos[, 2], type = "scatter", mode = "markers", xaxis = paste0("x", si), yaxis = paste0("y", si),
-                    marker = list(symbol = if (grid$topo == "hex") "hexagon2" else "square", size = px, color = fill, line = list(color = "#c3c2b7", width = 0.8)),
+                    marker = list(symbol = if (grid$topo == "hex") "hexagon" else "square", size = if (grid$topo == "hex") 0.72 * pitch else 0.9 * pitch,
+                                  color = fill, line = list(width = 0)),
                     text = hover, hoverinfo = "text", visible = v == vids[1])
     cv <- proto_curves(f$M, grid, d$L, d$nch, channel = 1, y_range = range(d$X[, seq_len(d$L)]))
     pl <- add_trace(pl, x = cv$x, y = cv$y, type = "scatter", mode = "lines", xaxis = paste0("x", si), yaxis = paste0("y", si),
                     line = list(color = "#D1343B", width = 1), hoverinfo = "skip", visible = v == vids[1])
-    vis_group <- c(vis_group, v, v)
+    vis_group <- c(vis_group, v, v, v)
   }
   buttons <- lapply(vids, function(v) list(method = "restyle", label = VARIANTS[[v]]$label, args = list(list(visible = vis_group == v))))
   for (si in seq_along(SIZES)) lay$annotations[[si]] <- list(xref = "paper", yref = "paper", x = (si - 0.5) / ns, y = 1.0, xanchor = "center", yanchor = "bottom",
@@ -718,7 +722,7 @@ size_chart <- function() {
     sprintf("<b>%s</b>, %d x %d (%d units)<br>%s: %s (seeds %s to %s)", VARIANTS[[sv$v]]$label, s, s, s^2, vw$label,
             formatC(mean(x, na.rm = TRUE), digits = 3, format = "fg", flag = "#"), formatC(min(x, na.rm = TRUE), digits = 3, format = "fg", flag = "#"),
             formatC(max(x, na.rm = TRUE), digits = 3, format = "fg", flag = "#")) }))))
-  pl <- plot_ly(height = 520)
+  pl <- plot_ly(height = 640)
   v0 <- names(VIEWS)[1]
   for (nm in names(series)) {
     sv <- series[[nm]]; i <- match(sv$v, vids)
@@ -732,7 +736,7 @@ size_chart <- function() {
                 list(yaxis.title.text = VIEWS[[id]]$label, yaxis.type = if (VIEWS[[id]]$kind == "rel") "log" else "linear", yaxis.autorange = TRUE))))
   data_buttons <- lapply(keys, function(k) list(method = "restyle", label = SHORT[[k]], args = list(list(visible = sapply(series, function(sv) sv$k == k)))))
   chart(pl, xaxis = ax("units on the map (log scale)", type = "log", tickvals = SIZES^2, ticktext = sprintf("%d x %d", SIZES, SIZES)),
-        yaxis = ax(VIEWS[[v0]]$label), legend = list(orientation = "v", x = 1.02, y = 1, font = list(size = 11)),
+        yaxis = ax(VIEWS[[v0]]$label), legend = list(orientation = "v", x = 1.02, y = 1, yanchor = "top", font = list(size = 11), tracegroupgap = 1),
         updatemenus = list(menu(measure_buttons, type = "dropdown", x = 0, y = 1.02), menu(data_buttons, x = 0.55, y = 1.02)),
         margin = list(t = 60, r = 10, b = 50))
 }
@@ -987,7 +991,7 @@ groups <- unlist(lapply(c("cbf", "pd"), function(dk) lapply(c("euclid", "dtw"), 
 keys4 <- c("cbf euclid", "cbf dtw", "pd euclid", "pd dtw"); labs4 <- c("small CBF, Euclidean", "small CBF, DTW", "PD stand-in, Euclidean", "PD stand-in, DTW")
 vis_all <- unlist(lapply(seq_along(groups), function(i) rep(i, sum(groups[[i]]))))
 buttons <- lapply(seq_along(keys4), function(i) list(method = "restyle", label = labs4[i], args = list(list(visible = vis_all == i))))
-chart(pl, xaxis = ax("training step (log scale)", type = "log"), yaxis = ax("largest difference of a prototype from the reference run (log scale)", type = "log"),
+chart(pl, xaxis = ax("training step (log scale)", type = "log"), yaxis = ax("largest difference from the reference (log)", type = "log", exponentformat = "power"),
       updatemenus = list(menu(buttons, x = 0, y = 1.03)), legend = list(orientation = "h", x = 0, y = -0.25), margin = list(t = 50, b = 70))
 ```
 

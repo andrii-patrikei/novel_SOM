@@ -62,7 +62,7 @@ cell_paths <- function(grid) {
 }
 # the prototypes as small curves in their cells, one channel at a time; at most n_show points per curve
 # and three decimals, to keep the page small
-proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62, n_show = 40) {
+proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width = 0.74, height = 0.62, n_show = 32) {
   keep <- unique(round(seq(1, L, length.out = min(L, n_show))))
   tt <- seq(-width / 2, width / 2, length.out = L)[keep]
   Y <- M[, (channel - 1) * L + keep, drop = FALSE]
@@ -71,7 +71,7 @@ proto_curves <- function(M, grid, L, nch, channel = 1, y_range = range(M), width
     x <- c(x, grid$pos[k, 1] + tt, NA)
     y <- c(y, grid$pos[k, 2] + ((Y[k, ] - y_range[1]) / diff(y_range) - 0.5) * height, NA)
   }
-  data.frame(x = round(x, 3), y = round(y, 3))
+  data.frame(x = round(x, 2), y = round(y, 2))
 }
 # colour of every cell: the class of most of the items it wins, white when it wins none
 cell_fill <- function(bmu, cls, K, class_col, alpha = 0.55) {
