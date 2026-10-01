@@ -147,7 +147,7 @@ judge_word <- function(w) { n <- w[["n"]]; if (n == 0) "not run" else if (w[["be
 # one phrase per data set: 'CBF clearly worse (0 of 5), partial discharges level (3 of 5), gestures ...'
 by_ds <- function(v, view, size = REF, ctrl = NULL) paste(sapply(names(datasets), function(k) {
   w <- if (is.null(ctrl)) wins_of(k, v, size, view) else wins_vs(k, v, ctrl, size, view)
-  sprintf("%s %s (%s)", SHORT[[k]], judge_word(w), tally_short(w)) }), collapse = ", ")
+  sprintf("%s %s (better on %s)", SHORT[[k]], judge_word(w), tally_short(w)) }), collapse = ", ")
 # on how many data sets a variant was clearly better / clearly worse than its control on a view
 count_ds <- function(v, view, size = REF) { j <- sapply(names(datasets), function(k) judge_word(wins_of(k, v, size, view))); c(better = sum(j == "clearly better"), worse = sum(j == "clearly worse"), n = length(j)) }
 best_variant <- function(ds, size, view, among = names(VARIANTS)) {
@@ -769,7 +769,8 @@ One figure per data set, seed 1: pick a variant in the menu and see its map
 at `r paste(sprintf('%d &times; %d', SIZES, SIZES), collapse = ', ')` units side by
 side. Each cell is tinted with the class of most of the items it wins (white:
 none), and carries its prototype as a small curve (the first axis for the
-gestures). Hover a cell for the items it won by class. Within one size,
+gestures; on the 14 &times; 14 map the cells are too small for a curve, so
+it shows the tints alone). Hover a cell for the items it won by class. Within one size,
 every variant starts from the same items and sees them in the same order;
 across sizes the draws differ, because a bigger map draws more start items.
 
@@ -791,8 +792,7 @@ gallery_plot <- function(k) {
     grid <- make_grid(s, s, VARIANTS[[v]]$topo, VARIANTS[[v]]$torus)
     fill <- cell_fill(f$bmu, d$cls, grid$K, col)
     counts <- table(factor(f$bmu, levels = seq_len(grid$K)), d$cls)
-    hover <- sapply(seq_len(grid$K), function(u) sprintf("<b>%s, %d x %d</b><br>unit %d: %d items<br>%s", VARIANTS[[v]]$label, s, s, u, sum(counts[u, ]),
-                                                          paste(sprintf("%s %d", colnames(counts), counts[u, ]), collapse = ", ")))
+    hover <- sapply(seq_len(grid$K), function(u) sprintf("unit %d: %d items (%s)", u, sum(counts[u, ]), paste(sprintf("%s %d", colnames(counts), counts[u, ]), collapse = ", ")))
     pitch <- (W / ns - 20) / (s + 1.1)                                   # pixels per lattice unit in this panel
     cp <- cell_paths(grid)
     pl <- add_trace(pl, x = round(cp$x, 3), y = round(cp$y, 3), type = "scatter", mode = "lines", xaxis = paste0("x", si), yaxis = paste0("y", si),
@@ -801,10 +801,14 @@ gallery_plot <- function(k) {
                     marker = list(symbol = if (grid$topo == "hex") "hexagon" else "square", size = if (grid$topo == "hex") 0.72 * pitch else 0.9 * pitch,
                                   color = fill, line = list(width = 0)),
                     text = hover, hoverinfo = "text", visible = v == vids[1])
-    cv <- proto_curves(f$M, grid, d$L, d$nch, channel = 1, y_range = range(d$X[, seq_len(d$L)]))
-    pl <- add_trace(pl, x = cv$x, y = cv$y, type = "scatter", mode = "lines", xaxis = paste0("x", si), yaxis = paste0("y", si),
-                    line = list(color = "#D1343B", width = 1), hoverinfo = "skip", visible = v == vids[1])
-    vis_group <- c(vis_group, v, v, v)
+    # the prototypes as curves, drawn on fewer points as the cells get smaller, and not at all on the largest map
+    n_show <- c(`5` = 20, `7` = 16, `10` = 12)[as.character(s)]
+    if (!is.na(n_show)) {
+      cv <- proto_curves(f$M, grid, d$L, d$nch, channel = 1, y_range = range(d$X[, seq_len(d$L)]), n_show = n_show)
+      pl <- add_trace(pl, x = cv$x, y = cv$y, type = "scatter", mode = "lines", xaxis = paste0("x", si), yaxis = paste0("y", si),
+                      line = list(color = "#D1343B", width = 1), hoverinfo = "skip", visible = v == vids[1])
+      vis_group <- c(vis_group, v, v, v)
+    } else vis_group <- c(vis_group, v, v)
   }
   buttons <- lapply(vids, function(v) list(method = "restyle", label = VARIANTS[[v]]$label, args = list(list(visible = vis_group == v))))
   for (si in seq_along(SIZES)) lay$annotations[[si]] <- list(xref = "paper", yref = "paper", x = (si - 0.5) / ns, y = 1.0, xanchor = "center", yanchor = "bottom",
@@ -1149,7 +1153,7 @@ for (dk in names(LD)) for (mo in c("euclid", "dtw")) for (pr in precs) {
 }
 groups <- unlist(lapply(names(LD), function(dk) lapply(c("euclid", "dtw"), function(mo) sapply(precs, function(pr) { d <- cv[cv$data == dk & cv$mode == mo & cv$precision == pr, ]; nrow(d) > 0 && !all(is.na(d$drift)) }))), recursive = FALSE)
 keys4 <- as.vector(outer(c("euclid", "dtw"), names(LD), function(m, d) paste(d, m)))[c(1, 2, 3, 4, 5, 6)]
-labs4 <- as.vector(t(outer(unname(LD), c("Euclidean", "DTW"), paste, sep = ", ")))
+labs4 <- as.vector(t(outer(c(cbf = "CBF", pd = "PD", pd_raw = "PD raw")[names(LD)], c("Euclidean", "DTW"), paste, sep = ", ")))
 vis_all <- unlist(lapply(seq_along(groups), function(i) rep(i, sum(groups[[i]]))))
 buttons <- lapply(seq_along(keys4), function(i) list(method = "restyle", label = labs4[i], args = list(list(visible = vis_all == i))))
 chart(pl, xaxis = ax("training step (log scale)", type = "log"), yaxis = ax("largest difference from the reference (log)", type = "log", exponentformat = "power"),

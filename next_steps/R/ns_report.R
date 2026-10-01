@@ -47,7 +47,14 @@ filtered_table <- function(d, filter_cols, id, signif_cols = NULL, round_cols = 
 }
 # plotly keeps a copy of every trace's arguments ('attrs') next to the data it draws; the page only needs
 # the data, so a built chart is slimmed before it is written out (about half the size of a large chart)
-slim <- function(p) { p <- plotly::plotly_build(p); p$x$attrs <- NULL; p }
+slim <- function(p) {
+  p <- plotly::plotly_build(p); p$x$attrs <- NULL
+  p$x$data <- lapply(p$x$data, function(tr) {                   # a scalar recycled to every point goes back to a scalar
+    for (a in c("hoverinfo", "hovertemplate", "visible", "showlegend", "legendgroup", "name"))
+      if (!is.null(tr[[a]]) && length(tr[[a]]) > 1 && length(unique(tr[[a]])) == 1) tr[[a]] <- tr[[a]][1]
+    tr })
+  p
+}
 f2 <- function(x) sprintf("%.2f", x); f3 <- function(x) sprintf("%.3f", x); pct <- function(x) sprintf("%.0f%%", 100 * x)
 menu <- function(buttons, x = 0, y = 1.03, type = "buttons", active = 0)
   list(type = type, direction = "right", x = x, y = y, xanchor = "left", yanchor = "bottom", showactive = TRUE, active = active,
