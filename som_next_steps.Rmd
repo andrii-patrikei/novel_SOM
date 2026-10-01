@@ -177,8 +177,10 @@ soft_fit <- by_ds("softdtw", "qe_dtw"); soft_cls <- by_ds("softdtw", "ari_dtw");
 ann_te <- by_ds("anneal", "te_own"); ann_qe <- by_ds("anneal", "qe_eu"); ann_cls <- by_ds("anneal", "ari_own")
 temps_won <- sum(sapply(c("softdtw", "anneal", "dtw_anneal"), function(v) sum(sapply(c("qe_dtw", "qe_eu", "te_own", "ari_own", "kl_dtw", "kl_eu"), function(vw) count_ds(v, vw)["better"]))))
 # the distances against the ONLINE SOM on the classes (the DTW-SOM is its own family's control)
+THR <- ceiling(0.8 * p$seeds)                              # 'clearly': at least this many seeds, and more better than worse
 dist_vs_eu <- function(k) { v <- setdiff(names(VARIANTS)[sapply(VARIANTS, `[[`, "group") == "distance"], "euclid")
-  w <- sapply(v, function(x) wins_vs(k, x, "euclid", REF, "ari_own")); v[w["better", ] >= 4 & w["better", ] > w["worse", ]] }
+  w <- sapply(v, function(x) wins_vs(k, x, "euclid", REF, "ari_own")); v[w["better", ] >= THR & w["better", ] > w["worse", ]] }
+temps_n <- 3 * 6 * length(datasets)
 clear_pd <- dist_vs_eu("pd"); clear_ge <- dist_vs_eu("gestures"); clear_cbf <- dist_vs_eu("cbf")
 size_flip  <- sapply(names(datasets), function(k) sapply(SIZES, function(s) best_variant(k, s, "ari_own")$id))
 LD <- c(cbf = "small CBF", pd = "PD stand-in (asinh)", pd_raw = "PD stand-in, raw pressure")
@@ -230,7 +232,7 @@ series. It has three parts:
   for the online SOM and `r f2(pd_dtw_ari)` for the DTW-SOM); on the gestures by
   the `r ge_best_ari$label` (`r f2(ge_best_ari$value)` against `r f2(ge_eu_ari)`).
   Against the online SOM with the same seeds, the distances that found the
-  classes better on at least four of `r p$seeds` seeds were
+  classes better on at least `r THR` of `r p$seeds` seeds were
   `r if (length(clear_pd)) paste(sapply(clear_pd, v_lab), collapse = ", ") else "none"` on the
   partial discharges, `r if (length(clear_ge)) paste(sapply(clear_ge, v_lab), collapse = ", ") else "none"`
   on the gestures and `r if (length(clear_cbf)) paste(sapply(clear_cbf, v_lab), collapse = ", ") else "none"`
@@ -254,7 +256,7 @@ series. It has three parts:
   the DTW-SOM, both judged with DTW, on fit: `r soft_fit`; on the classes:
   `r soft_cls`. The annealed winner against the online SOM, on order (TE):
   `r ann_te`; on fit: `r ann_qe`; on the classes: `r ann_cls`.
-  `r if (temps_won == 0) "Neither temperature was clearly better than its control on any data set and any measure at this size: a principled knob is still a knob, and the test that decides is the one inside the growing DTW-SOM on the real waveforms (Section 9)." else sprintf("The temperatures were clearly better than their controls in %d of the data-set-and-measure comparisons at this size; the rest were level or worse. The test that decides is the one inside the growing DTW-SOM on the real waveforms (Section 9).", temps_won)`
+  `r if (temps_won == 0) "Neither temperature was clearly better than its control on any data set and any measure at this size: a principled knob is still a knob, and the test that decides is the one inside the growing DTW-SOM on the real waveforms (Section 9)." else sprintf("The temperatures were clearly better than their controls in %d of %d data-set-and-measure comparisons at this size (three maps, six measures); the rest were level or worse. The test that decides is the one inside the growing DTW-SOM on the real waveforms (Section 9).", temps_won, temps_n)`
 * **The map size changes who wins.** Read the charts of Section 6 at four
   sizes before choosing: the best distance for the classes on the
   partial-discharge stand-in was `r paste(unique(sapply(size_flip[, "pd"], v_lab)), collapse = " / ")`
@@ -271,9 +273,10 @@ series. It has three parts:
   `r if (gap_small["fp32", "pd"] == 0) "never inside fp32's resolution" else sprintf("inside fp32's resolution in %s of the steps", pct(gap_small["fp32", "pd"]))`
   and `r if (gap_small["fp64", "pd"] == 0) "never inside fp64's" else sprintf("inside fp64's in %s", pct(gap_small["fp64", "pd"]))`.
   The one case built to fail is raw pressure without the asinh scale, four
-  decades in one squared distance: there fp32
+  decades in one squared distance: there the fp32 Euclidean map
   `r if (is.na(raw32$first_flip)) sprintf("still chose the reference's winner at every step, within %s", e1(raw32$drift)) else sprintf("chose another winner at %d of %s steps, the first at step %d", raw32$flips, format(ladder$pd_raw$S, big.mark = ","), raw32$first_flip)`,
-  and fp64 `r if (raw64$flips == 0) "none" else sprintf("%d", raw64$flips)`. MPFR is a reference oracle
+  the fp32 DTW map `r if (is.na(raw32d$first_flip)) "did the same" else sprintf("first chose another winner at step %d", raw32d$first_flip)`,
+  and fp64 `r if (raw64$flips == 0) "agreed with the reference at every step" else sprintf("differed at %d steps", raw64$flips)`. MPFR is a reference oracle
   (`r sprintf("%.1f", mpfr_secs)` s in C for what fp64 does in
   `r sprintf("%.2f", fp64_secs)` s), not a training tool; the precision
   question that matters for a field detector is the other way round, fp32 or
@@ -412,7 +415,13 @@ the table; the folded cells open on a click.
 if (is.null(ideas)) {
   cat("The catalogue (next_steps/ideas/ideas.json) is not in this checkout.")
 } else {
-  fold <- function(s, n = 90) ifelse(nchar(s) > n, sprintf("<details><summary>%s&hellip;</summary>%s</details>", substr(s, 1, n), s), s)
+  fold <- function(s, n = 160) ifelse(nchar(s) > n, sprintf("<details><summary>%s&hellip;</summary>%s</details>", substr(s, 1, n), s), s)
+  more <- function(i) sprintf(paste0("<details><summary>more</summary><p><b>For partial discharges.</b> %s</p><p><b>For movement.</b> %s</p>",
+                                     "<p><b>How to test.</b> %s</p><p><b>Cost.</b> %s</p><p><b>Already tested?</b> %s</p><p><b>Risk.</b> %s</p>",
+                                     "<p><b>The skeptic.</b> %s%s</p><p><b>References.</b> %s</p></details>"),
+                              i$why_pd, i$why_movement, i$how_to_test, i$cost, i$already_tested, i$risk,
+                              if (nzchar(i$problems)) i$problems else "no objection", if (nzchar(i$corrections)) paste0(" <i>Correction:</i> ", i$corrections) else "",
+                              paste(unlist(i$anchors), collapse = "; "))
   # what this page already ran, by idea (the critic's point: a kept idea that the demonstrator tested is not new)
   RAN <- list(`L3-cosine-correlation-shape-loudness` = "Sections 6, 7: cosine and correlation (without the loudness coordinate)",
               `L6-sbd-one-global-shift` = "Sections 6, 7: SBD", `PD5-shift-not-warp` = "Sections 6, 7: SBD (the shift; not the narrow band)",
@@ -423,16 +432,15 @@ if (is.null(ideas)) {
               `L8-multivariate-dtw-dependent-vs-independent` = "Section 6: dependent DTW only (the gestures)", `L3-magnification-control` = "Section 6: conscience (the equal-use end)")
   ran_of <- function(id) if (!is.null(RAN[[id]])) RAN[[id]] else "not yet"
   it <- do.call(rbind, lapply(ideas$ideas, function(i) data.frame(
-    Tier = i$tier, Lens = i$lens, Idea = sprintf("<b>%s</b>", i$title), `In this page` = ran_of(i$id),
-    `What it changes` = fold(paste(i$what_it_changes, i$mechanism)), `For partial discharges` = fold(i$why_pd),
-    `For movement` = fold(i$why_movement), `The control to beat` = fold(i$control), `How to test` = fold(i$how_to_test),
-    Cost = fold(i$cost, 60), `Expected gain` = i$expected_gain, Confidence = sprintf("%.2f", i$confidence),
-    `Skeptic` = fold(paste(if (nzchar(i$problems)) i$problems else "no objection", if (nzchar(i$corrections)) paste("Correction:", i$corrections) else ""), 70),
-    References = fold(paste(unlist(i$anchors), collapse = "; "), 60), stringsAsFactors = FALSE, check.names = FALSE)))
+    Tier = i$tier, Idea = sprintf("<b>%s</b><br><span class='note'>%s &middot; confidence %.2f &middot; references %s</span>%s", i$title, i$lens, i$confidence, i$anchor_status, more(i)),
+    `In this page` = ran_of(i$id), `What it changes` = fold(paste(i$what_it_changes, i$mechanism)), `The control to beat` = fold(i$control),
+    `Expected gain` = i$expected_gain, Lens = i$lens, Confidence = sprintf("%.2f", i$confidence), stringsAsFactors = FALSE, check.names = FALSE)))
   it <- it[order(match(it$Tier, c("A", "B", "C")), -as.numeric(it$Confidence)), ]
   chip_js <- JS("function(data, type) { if (type !== 'display') return data; return '<span class=\"chip ' + data + '\">' + data + '</span>'; }")
   filtered_table(it, c("Tier", "Lens", "In this page"), id = "ideas-table", escape = FALSE, dom = "ti", page_length = 100,
-                 column_defs = list(list(render = chip_js, targets = 0), list(width = "12%", targets = 2), list(width = "14%", targets = 4)),
+                 column_defs = list(list(render = chip_js, targets = 0), list(width = "24%", targets = 1), list(width = "9%", targets = 2),
+                                    list(width = "26%", targets = 3), list(width = "18%", targets = 4), list(width = "10%", targets = 5),
+                                    list(visible = FALSE, targets = c(6, 7))),
                  ordering = TRUE, paging = FALSE)
 }
 ```
@@ -1095,8 +1103,8 @@ earns its place only above those.
 * The `r v_lab(det_best)` map is the best alarm among the maps (AUROC
   `r f3(det_mean(det_best))`); the online SOM reaches `r f3(det_mean("euclid"))`.
   The best control that is not a map is `r tolower(sub("Control: ", "", BASE_LAB[[base_best]]))`
-  (`r f3(det_mean(base_best))`), the loudness threshold alone
-  `r f3(det_mean("base_peak"))`:
+  (`r f3(det_mean(base_best))`); the loudness threshold alone scores
+  `r f3(det_mean("base_peak"))`. So
   `r if (det_mean(det_best) > det_mean(base_best) + 0.01) "the map adds something over the nearest-neighbour score under the same distance" else if (det_mean(det_best) >= det_mean(base_best) - 0.01) "the map and the nearest-neighbour score under the same distance are level, so the distance is the finding, not the map" else "the nearest-neighbour score beats the map, so the distance is the finding and the map costs accuracy for its summary"`. Per kind, the Euclidean
   alarm scores `r f3(det_corona_eu)` on corona`r if (det_corona_eu < 0.5) ": below 0.5 means a corona pulse lies *closer* to the noise prototypes than noise does, because it is quiet and a Euclidean distance is mostly loudness" else ""`.
   An amplitude-blind distance (cosine, correlation, SBD) asks about the shape
