@@ -9,6 +9,7 @@ chaos, rings and tearing maps, and now a brainstorm of what to build next.
 | Report | What it holds |
 |---|---|
 | `som_next_steps.Rmd` | **Where to go next**: the lessons of the benchmarks, a verified catalogue of improvements for partial-discharge and movement data, a demonstrator of nine distances and six training ingredients on four map sizes with every measure, a detection test, and the precision ladder from fp32 to 256-bit MPFR |
+| `som_shortlist.Rmd` | **The shortlist**: the variants that rank best across the use measures and the detection test, plus the controls, with every quality measure (dot plots with seed ranges, scaled profiles, class / U-matrix / hits maps, wins against the control, detection, cost, all numbers); knits in half a minute from the cache of the next-steps report |
 | `som_vs_dtw_som.Rmd`, `som_metrics.Rmd`, `som_benchmark.Rmd`, `chaotic_units.Rmd`, `tearing_*.Rmd`, `growing_vs_classic.Rmd`, `som_variants_summary.Rmd` | the earlier reports of the project (kept in the author's working copy; this branch adds the next-steps report and its code) |
 
 ## som_next_steps.Rmd

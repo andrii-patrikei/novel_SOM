@@ -1,0 +1,358 @@
+---
+title: "The SOM shortlist"
+subtitle: "The variants that earned a second look, every quality measure, and the maps themselves: read from the cache of som_next_steps.Rmd, nothing trained here"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    code_folding: hide
+    mathjax: null
+params:
+  seeds: 5
+  rlen: 10
+  size: 10
+  n_short: 5
+---
+
+```{css, echo = FALSE}
+div.main-container { max-width: 1240px; }
+body { font-size: 16px; line-height: 1.6; color: #0b0b0b; }
+.box { border-left: 4px solid #2a78d6; background: #f3f7fd; padding: 10px 18px; margin: 16px 0 22px; }
+.box p:last-child, .box ul:last-child { margin-bottom: 0; }
+.box table { font-size: 13.5px; width: auto; } .box table td, .box table th { padding: 4px 9px; vertical-align: top; white-space: nowrap; }
+.note { color: #52514e; font-size: 14.5px; }
+table.dataTable { font-size: 13.5px; }
+```
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center", out.width = "100%", comment = "#>")
+library(plotly); library(DT); library(htmltools)
+```
+
+```{r code, results = "hide"}
+# the cache of som_next_steps.Rmd: the same settings give the same key, so nothing is trained here
+if (!exists("params")) { header <- rmarkdown::yaml_front_matter("som_shortlist.Rmd")$params; params <- lapply(header, function(x) if (is.list(x)) x$value else x) }
+p <- params
+Sys.setenv(PKG_LIBS = "-lquadmath -lmpfr -lgmp")
+Rcpp::sourceCpp("next_steps/ns_core.cpp", cacheDir = "next_steps/.cpp_cache")
+for (f in c("ns_data.R", "ns_maps.R", "ns_quality.R", "ns_bench.R", "ns_report.R")) source(file.path("next_steps/R", f))
+datasets <- load_datasets()
+SIZES <- c(5, 7, 10, 14); seeds <- seq_len(p$seeds)
+res <- compute_all(datasets, VARIANTS, SIZES, seeds, p$rlen, cores = 1)   # cached; cores only matter on a miss
+bench <- res$bench; fits <- res$fits; det <- res$detection
+SHORT <- c(cbf = "CBF", pd = "Partial discharges", gestures = "Gestures", gunpoint = "GunPoint")[names(datasets)]
+REF <- p$size
+```
+
+```{r select, include = FALSE}
+# ----------------------------------------------------------------- the measures, each read with a fair judge
+MEAS <- list(
+  list(id = "EV",     m = "EV",     j = "euclid", higher = TRUE,  label = "EV, explained variance (Euclidean)"),
+  list(id = "TE",     m = "TE",     j = "own",    higher = FALSE, label = "TE, topographic error (own distance)"),
+  list(id = "KL",     m = "KL",     j = "dtw",    higher = FALSE, label = "KL, Kaski-Lagus error (DTW)"),
+  list(id = "TP",     m = "TP",     j = "own",    higher = FALSE, label = "|TP|, topographic product (own distance)"),
+  list(id = "purity", m = "purity", j = "own",    higher = TRUE,  label = "Purity (own distance)"),
+  list(id = "ARI",    m = "ARI",    j = "own",    higher = TRUE,  label = "ARI (own distance)"),
+  list(id = "NMI",    m = "NMI",    j = "own",    higher = TRUE,  label = "NMI (own distance)"),
+  list(id = "trust",  m = "trust",  j = "euclid", higher = TRUE,  label = "Trustworthiness"),
+  list(id = "cont",   m = "cont",   j = "euclid", higher = TRUE,  label = "Continuity"),
+  list(id = "used",   m = "used",   j = "own",    higher = TRUE,  label = "Share of units used"))
+names(MEAS) <- sapply(MEAS, `[[`, "id")
+val <- function(ds, v, size, me) { b <- bench[bench$dataset == ds & bench$variant == v & bench$size == size & bench$judge == MEAS[[me]]$j, ]
+  b <- b[order(b$seed), ]; x <- b[[MEAS[[me]]$m]]; if (me == "TP") abs(x) else x }
+mean_of <- function(ds, v, size, me) { x <- val(ds, v, size, me); if (length(x)) mean(x, na.rm = TRUE) else NA }
+det_mean <- function(v) { x <- det$AUROC[det$variant == v]; if (length(x)) mean(x) else NA }
+
+# ----------------------------------------------------------------- the shortlist: a composite rank at REF x REF
+# For every data set, rank the seventeen variants (1 = best) on each measure that judges the map's use
+# (ARI, NMI, TE, KL, trustworthiness, continuity) and average the six ranks; rank them once more on the
+# detection AUROC of the partial discharges; the mean of the four blocks is the composite. The n_short
+# lowest join the shortlist, with every variant that is the best of the seventeen on ARI for some data set
+# (the classes are the point of the maps), and the two controls.
+RANK_ON <- c("ARI", "NMI", "TE", "KL", "trust", "cont")
+vids <- names(VARIANTS)
+rank_of <- function(k, me) { vals <- sapply(vids, mean_of, ds = k, size = REF, me = me); rank(if (MEAS[[me]]$higher) -vals else vals, na.last = "keep") }
+blocks <- sapply(names(datasets), function(k) rowMeans(sapply(RANK_ON, rank_of, k = k), na.rm = TRUE))
+det_rank <- rank(-sapply(vids, det_mean), na.last = "keep")
+rank_tab <- data.frame(variant = vids, label = sapply(vids, function(v) VARIANTS[[v]]$label), blocks, detection = det_rank,
+                       mean_rank = rowMeans(cbind(blocks, det_rank), na.rm = TRUE),
+                       ari = sapply(vids, function(v) mean(sapply(names(datasets), mean_of, v = v, size = REF, me = "ARI"))),
+                       te = sapply(vids, function(v) mean(sapply(names(datasets), mean_of, v = v, size = REF, me = "TE"))),
+                       auroc = sapply(vids, det_mean), stringsAsFactors = FALSE)
+rank_tab <- rank_tab[order(rank_tab$mean_rank), ]
+ari_best <- sapply(names(datasets), function(k) names(which.min(rank_of(k, "ARI"))))
+shortlist <- unique(c(head(rank_tab$variant[!rank_tab$variant %in% c("euclid", "dtw")], p$n_short), ari_best, "euclid", "dtw"))
+shortlist <- shortlist[order(match(shortlist, rank_tab$variant))]
+SL_COL <- setNames(c("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")[seq_along(shortlist)], shortlist)
+SL_LAB <- setNames(sapply(shortlist, function(v) VARIANTS[[v]]$label), shortlist)
+# a size-matched random control for purity: items in random units, 20 draws
+set.seed(1)
+purity_random <- sapply(names(datasets), function(k) { d <- datasets[[k]]; mean(replicate(20, purity(sample(REF^2, nrow(d$X), TRUE), d$cls))) })
+```
+
+`r length(VARIANTS) - 2` distances and ingredients beyond the two controls were tested in `som_next_steps.Rmd`, on
+`r length(datasets)` data sets, four map sizes and `r p$seeds` seeds, every
+map judged with the Euclidean distance, with DTW and with its own. This page
+keeps the `r p$n_short` that rank best on a composite of the measures that
+judge a map's use (ARI, NMI, TE, KL, trustworthiness and continuity on each
+data set, and the detection AUROC on the partial discharges), adds the best
+variant on ARI of every data set, keeps the two controls, and shows them with
+all the quality measures of the project, at `r REF` &times; `r REF` units
+unless said otherwise.
+
+<div class="box">
+
+**The shortlist.** The rank is the mean of four blocks: the mean rank over `r length(RANK_ON)` measures on each of the
+`r length(datasets)` data sets (`r paste(SHORT, collapse = ", ")`), and the rank on the detection test (1 = best of 17).
+ARI is the mean over the data sets, AUROC the mean over the seeds.
+
+```{r shortlist-table, echo = FALSE}
+st <- rank_tab[rank_tab$variant %in% shortlist, ]
+st$why <- sapply(st$variant, function(v) VARIANTS[[v]]$what)
+st$star <- sapply(st$variant, function(v) { w <- names(ari_best)[ari_best == v]; if (length(w)) paste(SHORT[w], collapse = ", ") else "" })
+blk <- round(st[, c(names(datasets), "detection")], 1); names(blk) <- c(SHORT, "Detection")
+knitr::kable(data.frame(Variant = st$label, Rank = sprintf("%.1f", st$mean_rank), blk,
+                        `ARI` = sprintf("%.2f", st$ari), `AUROC` = sprintf("%.2f", st$auroc), `Best ARI on` = st$star, check.names = FALSE),
+             row.names = FALSE, align = "lrrrrrrrl")
+```
+
+What each one changes:
+
+```{r shortlist-what, echo = FALSE, results = "asis"}
+cat(sprintf("* **%s.** %s", st$label, st$why), sep = "\n")
+```
+
+Left out, with their mean rank: `r paste(sprintf("%s (%.1f)", rank_tab$label[!rank_tab$variant %in% shortlist], rank_tab$mean_rank[!rank_tab$variant %in% shortlist]), collapse = ", ")`.
+
+</div>
+
+# 1. Every measure, side by side
+
+Pick a measure. Each row is a variant of the shortlist, each panel a data set;
+the dot is the mean over `r p$seeds` seeds and the bar the range over the
+seeds, so a difference inside the bar is seed-to-seed noise. The dotted line
+marks the online SOM, the control.
+
+```{r forest, fig.height = 5}
+forest <- function() {
+  keys <- names(datasets); nk <- length(keys); ypos <- rev(seq_along(shortlist))
+  build <- function(me) lapply(keys, function(k) {
+    x <- sapply(shortlist, function(v) { r <- val(k, v, REF, me); c(mean(r, na.rm = TRUE), min(r, na.rm = TRUE), max(r, na.rm = TRUE)) })
+    list(m = I(x[1, ]), lo = I(x[2, ]), hi = I(x[3, ]), ref = mean_of(k, "euclid", REF, me),
+         text = I(sprintf("<b>%s</b>, %s<br>%s: %s (seeds %s to %s)", SL_LAB, SHORT[[k]], MEAS[[me]]$label,
+                          formatC(x[1, ], digits = 3, format = "fg", flag = "#"), formatC(x[2, ], digits = 3, format = "fg", flag = "#"), formatC(x[3, ], digits = 3, format = "fg", flag = "#"))))
+  })
+  B <- lapply(names(MEAS), build); names(B) <- names(MEAS)
+  pl <- plot_ly(height = 420)
+  lay <- list(margin = list(t = 50, b = 40, l = 10, r = 10), showlegend = FALSE, shapes = list())
+  for (i in seq_len(nk)) {
+    b <- B[[1]][[i]]; xa <- paste0("x", i); ya <- paste0("y", i)
+    pl <- add_trace(pl, x = b$m, y = ypos, type = "scatter", mode = "markers", xaxis = xa, yaxis = ya, text = b$text, hovertemplate = "%{text}<extra></extra>",
+                    error_x = list(type = "data", symmetric = FALSE, array = b$hi - b$m, arrayminus = b$m - b$lo, color = AXIS, thickness = 1.5, width = 0),
+                    marker = list(color = unname(SL_COL), size = 11, line = list(color = "#ffffff", width = 1.5)))
+    dom <- c((i - 1) / nk + 0.03, i / nk - 0.02)
+    lay[[paste0("xaxis", if (i > 1) i else "")]] <- ax(SHORT[[keys[i]]], domain = dom, anchor = ya, zeroline = FALSE)
+    lay[[paste0("yaxis", if (i > 1) i else "")]] <- ax(NULL, anchor = xa, tickvals = ypos, ticktext = if (i == 1) unname(SL_LAB) else rep("", length(ypos)),
+                                                     range = c(0.4, length(ypos) + 0.6), showgrid = TRUE, ticksuffix = "  ")
+    lay$shapes[[i]] <- list(type = "line", xref = xa, yref = ya, x0 = b$ref, x1 = b$ref, y0 = 0.4, y1 = length(ypos) + 0.6, line = list(color = INK2, width = 1.2, dash = "dot"))
+  }
+  buttons <- lapply(names(MEAS), function(me) {
+    xs <- list(); ex <- list(); ts <- list(); shapes <- lay$shapes
+    for (i in seq_len(nk)) { b <- B[[me]][[i]]; xs[[i]] <- b$m; ts[[i]] <- b$text
+      ex[[i]] <- list(type = "data", symmetric = FALSE, array = b$hi - b$m, arrayminus = b$m - b$lo, color = AXIS, thickness = 1.5, width = 0)
+      shapes[[i]]$x0 <- b$ref; shapes[[i]]$x1 <- b$ref }
+    args2 <- list(shapes = shapes)
+    for (i in seq_len(nk)) args2[[paste0("xaxis", if (i > 1) i else "", ".autorange")]] <- TRUE
+    list(method = "update", label = paste0(MEAS[[me]]$label, if (MEAS[[me]]$higher) " \u00b7 higher is better" else " \u00b7 lower is better"),
+         args = list(list(x = xs, text = ts, error_x = ex), args2))
+  })
+  lay$updatemenus <- list(menu(buttons, type = "dropdown", x = 0, y = 1.04))
+  slim(do.call(chart, c(list(pl), lay)))
+}
+forest()
+```
+
+<p class="note">Purity rises with the number of units whatever the map learned: random units would score
+`r paste(sprintf("%s %.2f", SHORT, purity_random), collapse = ", ")` on these sets at this size. EV, TE and KL
+are judged within one size only; QE is left out because each map fits best in its own distance, and KL is
+judged with DTW for every map (the common yardstick on series).</p>
+
+# 2. The profile of each variant
+
+Every measure scaled from the worst of the seventeen variants (0) to the best
+(1) on the chosen data set: a line along the top is good everywhere, a dip is
+the measure the variant pays with.
+
+```{r profile, fig.height = 5.2}
+profile <- function() {
+  keys <- names(datasets); mids <- names(MEAS); nv <- length(shortlist); ncol <- 4; nrow <- ceiling(nv / ncol)
+  scaled <- lapply(keys, function(k) sapply(mids, function(me) {
+    vals <- sapply(vids, mean_of, ds = k, size = REF, me = me); if (!MEAS[[me]]$higher) vals <- -vals
+    (vals - min(vals, na.rm = TRUE)) / (max(vals, na.rm = TRUE) - min(vals, na.rm = TRUE)) }))
+  names(scaled) <- keys
+  panels <- lapply(seq_along(shortlist), function(i) {
+    v <- shortlist[i]; pl <- plot_ly()
+    for (k in keys) {
+      for (o in setdiff(vids, v)) pl <- add_trace(pl, x = mids, y = scaled[[k]][o, ], type = "scatter", mode = "lines", line = list(color = GRID, width = 1),
+                                                 hoverinfo = "skip", showlegend = FALSE, visible = k == keys[1])
+      pl <- add_trace(pl, x = mids, y = scaled[[k]][v, ], type = "scatter", mode = "lines+markers", line = list(color = SL_COL[[v]], width = 2.5),
+                      marker = list(color = SL_COL[[v]], size = 7, line = list(color = "#ffffff", width = 1)), showlegend = FALSE, visible = k == keys[1],
+                      text = sprintf("<b>%s</b>, %s<br>%s<br>%.2f of the way from the worst to the best of the 17", SL_LAB[[v]], SHORT[[k]], sapply(MEAS, `[[`, "label"), scaled[[k]][v, ]),
+                      hovertemplate = "%{text}<extra></extra>")
+    }
+    pl
+  })
+  fig <- subplot(panels, nrows = nrow, shareX = TRUE, shareY = TRUE, margin = c(0.015, 0.015, 0.06, 0.06))
+  n_per_panel <- length(vids) * length(keys)
+  buttons <- lapply(keys, function(k) list(method = "restyle", label = SHORT[[k]], args = list(list(visible = rep(rep(keys == k, each = length(vids)), nv)))))
+  ann <- lapply(seq_along(shortlist), function(i) {
+    r <- (i - 1) %/% ncol; cidx <- (i - 1) %% ncol
+    list(text = SL_LAB[[shortlist[i]]], xref = "paper", yref = "paper", x = (cidx + 0.5) / ncol, y = 1 - r / nrow + 0.005, xanchor = "center", yanchor = "bottom",
+         showarrow = FALSE, font = list(size = 12, color = INK)) })
+  lay <- list(updatemenus = list(menu(buttons, x = 0, y = 1.1)), annotations = ann, margin = list(t = 60, b = 50, l = 40, r = 10), showlegend = FALSE)
+  for (i in seq_len(nv)) { lay[[paste0("xaxis", if (i > 1) i else "")]] <- ax(NULL, showgrid = FALSE, tickfont = list(size = 10, color = INK2), tickangle = -60)
+                           lay[[paste0("yaxis", if (i > 1) i else "")]] <- ax(NULL, range = c(-0.08, 1.08), tickvals = c(0, 0.5, 1), tickfont = list(size = 10, color = INK2)) }
+  slim(do.call(chart, c(list(fig), lay)))
+}
+profile()
+```
+
+<p class="note">0 is the worst and 1 the best of the seventeen variants on that measure and data set; the grey lines are the other sixteen.</p>
+
+# 3. The maps
+
+Seed 1, `r REF` &times; `r REF`. Three views of the same map: the **classes**
+(each cell tinted with the class of most of the items it wins, white when it
+wins none), the **U-matrix** (each cell shaded by the mean distance, in the
+map's own distance, between its prototype and its neighbours' prototypes:
+dark ridges are the walls between clusters), and the **hits** (how many items
+each cell wins). Hover a cell for its numbers.
+
+## Maps {.tabset .tabset-pills}
+
+```{r maps, results = "asis"}
+seq_ramp <- function(x, lo = "#cde2fb", hi = "#0d366b") { x <- (x - min(x)) / max(1e-12, diff(range(x))); grDevices::colorRampPalette(c(lo, hi))(101)[1 + round(100 * x)] }
+map_views <- function(k) {
+  d <- datasets[[k]]; col <- class_colours(d$cls); grid <- make_grid(REF, REF)
+  W <- 640; H <- 560; pitch <- min((W - 20) / (REF + 1.1), (H - 50) / (REF * 0.87 + 0.8))   # pixels per lattice unit
+  pl <- plot_ly(width = W, height = H); vis <- c()
+  cp <- cell_paths(grid)
+  for (v in shortlist) {
+    f <- fits[[paste(k, v, REF, sep = "|")]]; if (is.null(f)) next
+    spec <- VARIANTS[[v]]
+    dV <- cross_dist(f$M, f$M, d, judge_args(d, "own", spec)); diag(dV) <- 0
+    umat <- sapply(seq_len(grid$K), function(u) { nb <- which(grid$links[u, ] == 1); mean(dV[u, nb]) })
+    counts <- table(factor(f$bmu, levels = seq_len(grid$K)), d$cls); hits <- rowSums(counts)
+    main <- apply(counts, 1, function(r) if (sum(r)) colnames(counts)[which.max(r)] else "none")
+    hover <- sprintf("unit %d: %d items, mostly %s<br>U-matrix %.3f<br>%s", seq_len(grid$K), hits, main, umat,
+                     apply(counts, 1, function(r) paste(sprintf("%s %d", colnames(counts), r), collapse = ", ")))
+    fills <- list(classes = cell_fill(f$bmu, d$cls, grid$K, col), umatrix = seq_ramp(umat), hits = seq_ramp(hits, "#fcfcfb", "#184f95"))
+    for (view in names(fills)) {
+      pl <- add_trace(pl, x = grid$pos[, 1], y = grid$pos[, 2], type = "scatter", mode = "markers",
+                      marker = list(symbol = "hexagon", size = 0.72 * pitch, color = fills[[view]], line = list(color = "#c3c2b7", width = 0.6)),
+                      text = hover, hoverinfo = "text", name = paste(v, view), visible = v == shortlist[1] && view == "classes")
+      vis <- c(vis, paste(v, view))
+    }
+  }
+  pl <- add_trace(pl, x = round(cp$x, 3), y = round(cp$y, 3), type = "scatter", mode = "lines", line = list(color = "#c3c2b7", width = 0.6), hoverinfo = "skip", name = "outline")
+  vis <- c(vis, "outline")
+  variants_here <- unique(sub(" (classes|umatrix|hits)$", "", vis[vis != "outline"]))
+  # two menus would fight over 'visible', so one dropdown carries variant x view
+  VIEWS <- c(classes = "classes", umatrix = "U-matrix", hits = "hits")
+  buttons <- list()
+  for (v in variants_here) for (view in names(VIEWS))
+    buttons[[length(buttons) + 1]] <- list(method = "restyle", label = paste0(SL_LAB[[v]], ": ", VIEWS[[view]]),
+                                           args = list(list(visible = vis == paste(v, view) | vis == "outline")))
+  chart(pl, xaxis = list(visible = FALSE, range = c(0.2, REF + 1.3), fixedrange = TRUE), yaxis = list(visible = FALSE, range = c(0.2, REF * 0.87 + 1), fixedrange = TRUE, scaleanchor = "x"),
+        showlegend = FALSE, updatemenus = list(menu(buttons, type = "dropdown", x = 0, y = 1.02)), margin = list(t = 40, b = 10, l = 10, r = 10)) |> slim()
+}
+for (k in names(datasets)) { cat("\n\n### ", SHORT[[k]], "\n\n", sep = ""); print(tagList(map_views(k))); cat("\n\n") }
+```
+
+<p class="note">Class colours: `r paste(sprintf("<span style='color:%s'>&#9632;</span> %s", unname(class_colours(datasets[[1]]$cls)), levels(datasets[[1]]$cls)), collapse = "  ")` for CBF,
+and in the same order for the other sets. The U-matrix and the hits use one blue ramp, light to dark.</p>
+
+# 4. Against the control, seed by seed
+
+On how many of the `r p$seeds` seeds each variant beat the online SOM with
+the same start and order of items, minus the seeds it lost, for every
+measure. Blue: better on more seeds than worse; red: the other way.
+
+```{r wins, fig.height = 4.2}
+wins_hm <- function() {
+  keys <- names(datasets); vs <- setdiff(shortlist, "euclid")
+  Z <- lapply(keys, function(k) t(sapply(vs, function(v) sapply(names(MEAS), function(me) {
+    a <- val(k, v, REF, me); b <- val(k, "euclid", REF, me); n <- min(length(a), length(b)); d <- if (MEAS[[me]]$higher) a[1:n] - b[1:n] else b[1:n] - a[1:n]
+    sum(d > 0, na.rm = TRUE) - sum(d < 0, na.rm = TRUE) }))))
+  H <- lapply(keys, function(k) t(sapply(vs, function(v) sapply(names(MEAS), function(me) {
+    a <- val(k, v, REF, me); b <- val(k, "euclid", REF, me)
+    sprintf("<b>%s</b>, %s<br>%s: %.3g against %.3g for the online SOM", SL_LAB[[v]], SHORT[[k]], MEAS[[me]]$label, mean(a, na.rm = TRUE), mean(b, na.rm = TRUE)) }))))
+  pl <- plot_ly(x = sapply(MEAS, `[[`, "id"), y = unname(SL_LAB[vs]), z = Z[[1]], text = H[[1]], type = "heatmap", hoverinfo = "text",
+                colorscale = list(c(0, "#e34948"), c(0.25, "#f3aeac"), c(0.5, "#f0efec"), c(0.75, "#9ec5f4"), c(1, "#2a78d6")), zmin = -p$seeds, zmax = p$seeds, xgap = 3, ygap = 3,
+                colorbar = list(title = list(text = "seeds better minus worse", font = list(size = 12, color = INK2)), tickvals = c(-p$seeds, 0, p$seeds), thickness = 12, outlinewidth = 0))
+  ann <- lapply(Z, function(z) unlist(lapply(seq_len(nrow(z)), function(i) lapply(seq_len(ncol(z)), function(j)
+    list(x = names(MEAS)[j], y = SL_LAB[[vs[i]]], text = sprintf("%+d", z[i, j]), showarrow = FALSE,
+         font = list(size = 11, color = if (abs(z[i, j]) >= 4) "#ffffff" else INK)))), recursive = FALSE))
+  buttons <- lapply(seq_along(keys), function(i) list(method = "update", label = SHORT[[keys[i]]],
+                                                      args = list(list(z = list(Z[[i]]), text = list(H[[i]])), list(annotations = ann[[i]]))))
+  chart(pl, xaxis = ax(NULL, showgrid = FALSE), yaxis = ax(NULL, autorange = "reversed", showgrid = FALSE, ticksuffix = "  "),
+        annotations = ann[[1]], updatemenus = list(menu(buttons, x = 0, y = 1.04)), margin = list(t = 50, l = 200)) |> slim()
+}
+wins_hm()
+```
+
+# 5. Detection and cost
+
+```{r detect, fig.height = 3.8}
+BASE_LAB <- c(base_peak = "Control: loudness threshold", base_1nn_euclid = "Control: nearest noise item, Euclidean",
+              base_1nn_cosine = "Control: nearest noise item, cosine", base_1nn_dtw = "Control: nearest noise item, DTW")
+dk <- det[det$variant %in% c(shortlist, names(BASE_LAB)), ]
+lab <- function(v) if (v %in% names(SL_LAB)) SL_LAB[[v]] else BASE_LAB[[v]]
+da <- aggregate(AUROC ~ variant, dk, mean); da <- da[order(-da$AUROC), ]
+pl <- plot_ly(height = 340)
+for (v in da$variant) { d <- dk[dk$variant == v, ]; base <- v %in% names(BASE_LAB)
+  pl <- add_trace(pl, x = d$AUROC, y = rep(lab(v), nrow(d)), type = "scatter", mode = "markers", name = lab(v), showlegend = FALSE,
+                  marker = list(color = if (base) MUTED else SL_COL[[v]], symbol = if (base) "diamond" else "circle", size = if (base) 12 else 10, line = list(color = "#ffffff", width = 1.5)),
+                  text = sprintf("<b>%s</b>%s<br>AUROC %.3f", lab(v), if (base) "" else sprintf(", seed %d", d$seed), d$AUROC), hovertemplate = "%{text}<extra></extra>") }
+chart(pl, xaxis = ax("AUROC of the alarm (maps trained on noise only)", range = c(0.4, 1.02)),
+      yaxis = ax(NULL, categoryorder = "array", categoryarray = rev(sapply(da$variant, lab)), ticksuffix = "  "),
+      shapes = list(list(type = "line", x0 = 0.5, x1 = 0.5, yref = "paper", y0 = 0, y1 = 1, line = list(color = AXIS, dash = "dot"))), margin = list(t = 10, l = 240)) |> slim()
+```
+
+```{r cost}
+secs <- sapply(shortlist, function(v) sapply(names(datasets), function(k) mean(bench$seconds[bench$dataset == k & bench$variant == v & bench$size == REF & bench$judge == "own"])))
+cost <- data.frame(Variant = unname(SL_LAB), t(round(secs, 2)), check.names = FALSE)
+names(cost)[-1] <- paste("Seconds per map,", SHORT)
+cost$`Relative to the online SOM` <- sprintf("%.0f x", colMeans(secs) / colMeans(secs)[["euclid"]])
+tab(cost, search = FALSE)
+```
+
+# 6. All numbers
+
+Means and seed-to-seed standard deviations of every measure for the shortlist,
+at every size; filter with the menus.
+
+```{r numbers}
+rows <- do.call(rbind, lapply(names(datasets), function(k) do.call(rbind, lapply(SIZES, function(s) do.call(rbind, lapply(shortlist, function(v) {
+  cells <- sapply(names(MEAS), function(me) { x <- val(k, v, s, me); if (!length(x) || all(is.na(x))) "" else sprintf("%.3f &plusmn; %.3f", mean(x, na.rm = TRUE), sd(x, na.rm = TRUE)) })
+  data.frame(`Data set` = SHORT[[k]], Map = sprintf("%d x %d", s, s), Variant = SL_LAB[[v]], t(cells), check.names = FALSE, stringsAsFactors = FALSE)
+}))))))
+names(rows)[-(1:3)] <- sapply(MEAS, `[[`, "id")
+filtered_table(rows, c("Data set", "Map", "Variant"), id = "shortlist-numbers", escape = FALSE, page_length = length(shortlist) * 2)
+```
+
+<div class="box">
+
+* **The shortlist is a ranking, not a verdict.** With `r p$seeds` seeds, only
+  `r p$seeds` of `r p$seeds` is a statement (two-sided sign test p = `r signif(2 / 2^p$seeds, 2)`);
+  the heatmap of Section 4 shows how few cells reach it.
+* **Each measure answers one question.** EV says how close the prototypes are,
+  TE and KL whether the map is in order, trustworthiness and continuity whether
+  the neighbourhoods are the data's, purity, ARI and NMI whether the classes
+  came out, the AUROC whether a discharge trips the alarm. The profile of
+  Section 2 shows what each variant pays for what it gains.
+* **These are synthetic stand-ins.** Put `som_bench/data/datasets.rds` next to
+  the code and both reports use the real CBF, partial discharges and GunPoint.
+
+</div>
