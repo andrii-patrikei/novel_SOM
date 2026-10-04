@@ -1,4 +1,4 @@
-# novl_SOM
+# novel_SOM
 
 Self-organizing maps for time series, built from scratch in R and Rcpp: a
 Kohonen SOM, a DTW-SOM, fourteen variants benchmarked on twelve data sets,
@@ -40,3 +40,7 @@ CPU, half of it soft-DTW) and caches the results under `next_steps/cache`;
 `run_benchmark.R` does the same on all cores. *Knit with parameters* changes
 the seeds and passes, and the quick mode knits a small version for
 development.
+
+## License
+
+MIT
